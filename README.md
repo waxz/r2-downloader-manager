@@ -155,3 +155,7 @@ Returns JSON array of files in the bucket.
 ## 📝 License
 
 MIT License. Feel free to modify and use for your own projects.
+
+## Example File
+- File with konwn length: https://examplefiles.org/example-video-files/sample-mp4-files
+- File without known length: https://file-examples.com/storage/fe25d4377569b8210926686/2017/04/file_example_MP4_1920_18MG.mp4

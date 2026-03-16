@@ -1,724 +1,409 @@
 // ============================================================================
 // HELPERS
 // ============================================================================
+const jsonOk = (data) => Response.json(data);
 const jsonError = (msg, status = 400) => Response.json({ error: msg }, { status });
-
-async function safeParseBody(request) {
-  try {
-    const clone = request.clone(); 
-    return await clone.json();
-  } catch (e) {
-    return null;
-  }
+async function readBody(req) {
+  try { return await req.json(); } catch { return null; }
 }
+function baseName(key) { return key.split('/').filter(Boolean).pop() || key; }
 
 // ============================================================================
-// MAIN WORKER LOGIC
+// MAIN WORKER
 // ============================================================================
 export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
+      const path = url.pathname;
+      const method = request.method;
 
-      // --- PUBLIC ROUTE: SHARED DOWNLOADS ---
-      if (url.pathname.startsWith('/s/')) {
-        const code = url.searchParams.get("code") || "";
-        let filename = url.pathname.split('/')[2];
-        if (!filename) return new Response("Missing file ID", { status: 400 });
+      // --- Serve frontend ---
+      if (path === '/' || path === '/index.html') return env.ASSETS.fetch(request);
 
-        const tokenObj = await env.DRIVE_BUCKET.get(`.tokens/${filename}`);
-        if (!tokenObj) return new Response("Invalid or Expired Link", { status: 404 });
+      // --- Public share (no auth) ---
+      if (path.startsWith('/s/')) return handlePublicShare(url, env);
 
-        const meta = await tokenObj.json();
-
-        if (meta.expires && Date.now() > meta.expires) {
-            await env.DRIVE_BUCKET.delete(`.tokens/${filename}`);
-            return new Response("Link Expired", { status: 410 });
-        }
-        
-        if(code !== meta.code){
-            return new Response("Invalid Share Code", { status: 403 });
-        }
-
-        const object = await env.DRIVE_BUCKET.get(meta.filename);
-        if (!object) return new Response("File not found", { status: 404 });
-
-        const headers = new Headers();
-        object.writeHttpMetadata(headers);
-        headers.set('Content-Disposition', `attachment; filename="${meta.filename}"`);
-        return new Response(object.body, { headers });
-      }
-
-      // --- AUTHENTICATION ---
+      // --- Auth gate for everything else ---
       const authKey = env.AUTH_KEY || env.APIKEYSECRET;
-      const isAuthorized = () => {
-        if (!authKey) return true;
-        const queryKey = url.searchParams.get('key');
-        const headerKey = request.headers.get('x-api-key');
-        return (queryKey === authKey || headerKey === authKey);
-      };
-
-      if (url.pathname === '/' && request.method === 'GET') {
-        return new Response(renderAdminPanel(url.searchParams.get('key') || ''), {
-          status: 200, headers: { 'Content-Type': 'text/html' }
-        });
+      if (authKey) {
+        const k = url.searchParams.get('key') || request.headers.get('x-api-key');
+        if (k !== authKey) return jsonError('Unauthorized', 401);
       }
 
-      if (!isAuthorized()) return jsonError('Unauthorized', 401);
-      const authParam = authKey ? `?key=${authKey}` : '';
+      // --- File routes ---
+      if (path === '/api/files' && method === 'GET') return handleListFiles(url, env);
 
-      // --- API ROUTES ---
-
-      // SHARE GENERATE
-      if (url.pathname === '/share/generate' && request.method === 'POST') {
-        const body = await safeParseBody(request);
-        if(!body) return jsonError("Invalid JSON");
-        
-        const { filename, hours, customCode } = body;
-        if (!filename || (!hours && hours !== 0)) return jsonError("Missing params");
-
-        let code = (customCode && customCode.trim() !== "") 
-            ? customCode.trim().replace(/[^a-zA-Z0-9-_]/g, '') 
-            : crypto.randomUUID().replace(/-/g, '').substring(0, 6);
-
-        let expires = (parseInt(hours) !== 999) ? Date.now() + (hours * 60 * 60 * 1000) : null;
-        let encode_filename = btoa(filename).replace(/=/g, '');
-        
-        await env.DRIVE_BUCKET.put(`.tokens/${encode_filename}`, JSON.stringify({ filename, expires, code }));
-
-        return Response.json({ 
-            code, 
-            url: `/s/${encode_filename}?code=${code}`,
-            expiresAt: expires ? new Date(expires).toLocaleString() : "Never"
-        });
+      if (path === '/api/files/info' && method === 'GET') {
+        const key = url.searchParams.get('key');
+        if (!key) return jsonError('Missing key');
+        const head = await env.DRIVE_BUCKET.head(key);
+        if (!head) return jsonError('Not found', 404);
+        return jsonOk({ key: head.key, size: head.size, uploaded: head.uploaded, httpMetadata: head.httpMetadata, customMetadata: head.customMetadata });
       }
 
-      // INIT JOB
-      if (url.pathname === '/init-job' && request.method === 'POST') {
-        const body = await safeParseBody(request);
-        if (!body) return jsonError("Invalid JSON");
-        const { sourceUrl, filename, force } = body;
-        
-        if (!force) {
+      if (path === '/api/files/delete' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body) return jsonError('Invalid body');
+        const keys = Array.isArray(body.keys) ? body.keys : body.filename ? [body.filename] : [];
+        if (!keys.length) return jsonError('No keys');
+        // Also delete associated .folder markers if deleting folders
+        await Promise.all(keys.map(k => env.DRIVE_BUCKET.delete(k)));
+        return jsonOk({ deleted: keys.length });
+      }
+
+      if (path === '/api/files/rename' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.oldName || !body?.newName) return jsonError('Missing params');
+        const src = await env.DRIVE_BUCKET.get(body.oldName);
+        if (!src) return jsonError('Not found', 404);
+        if (await env.DRIVE_BUCKET.head(body.newName)) return jsonError('Name already taken', 409);
+        await env.DRIVE_BUCKET.put(body.newName, src.body, { 
+          httpMetadata: src.httpMetadata, 
+          customMetadata: src.customMetadata
+        });
+        await env.DRIVE_BUCKET.delete(body.oldName);
+        return jsonOk({ status: 'renamed', oldName: body.oldName, newName: body.newName });
+      }
+
+      if (path === '/api/files/move' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.source || !body?.destination) return jsonError('Missing source or destination');
+        const src = await env.DRIVE_BUCKET.get(body.source);
+        if (!src) return jsonError('Source not found', 404);
+        const destKey = body.destination.endsWith('/') ? body.destination + body.source.split('/').pop() : body.destination;
+        if (await env.DRIVE_BUCKET.head(destKey)) return jsonError('Destination already exists', 409);
+        await env.DRIVE_BUCKET.put(destKey, src.body, { 
+          httpMetadata: src.httpMetadata, 
+          customMetadata: src.customMetadata
+        });
+        await env.DRIVE_BUCKET.delete(body.source);
+        return jsonOk({ status: 'moved', source: body.source, destination: destKey });
+      }
+
+      if (path === '/api/files/copy' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.source || !body?.destination) return jsonError('Missing source or destination');
+        const src = await env.DRIVE_BUCKET.get(body.source);
+        if (!src) return jsonError('Source not found', 404);
+        const destKey = body.destination.endsWith('/') ? body.destination + body.source.split('/').pop() : body.destination;
+        if (await env.DRIVE_BUCKET.head(destKey)) return jsonError('Destination already exists', 409);
+        await env.DRIVE_BUCKET.put(destKey, src.body, { 
+          httpMetadata: src.httpMetadata, 
+          customMetadata: src.customMetadata
+        });
+        return jsonOk({ status: 'copied', source: body.source, destination: destKey });
+      }
+
+      if (path === '/api/files/mkdir' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.path) return jsonError('Missing path');
+        const folderKey = body.path.endsWith('/') ? body.path : body.path + '/';
+        await env.DRIVE_BUCKET.put(folderKey + '.emptydir', new Uint8Array(0), { customMetadata: { type: 'folder' } });
+        return jsonOk({ created: folderKey });
+      }
+
+      if (path === '/api/upload' && (method === 'PUT' || method === 'POST')) {
+        let filename = url.searchParams.get('filename');
+        if (!filename) return jsonError('Missing filename');
+        if (!filename.startsWith('/')) filename = '/' + filename;
+        await env.DRIVE_BUCKET.put(filename, request.body, {
+          httpMetadata: { contentType: request.headers.get('content-type') || 'application/octet-stream' },
+          customMetadata: { source: 'upload', timestamp: Date.now().toString() }
+        });
+        return jsonOk({ status: 'uploaded', filename });
+      }
+
+      if (path.startsWith('/get/')) {
+        const filename = decodeURIComponent(path.slice(5));
+        const obj = await env.DRIVE_BUCKET.get(filename);
+        if (!obj) return new Response('Not found', { status: 404 });
+        const headers = new Headers();
+        obj.writeHttpMetadata(headers);
+        headers.set('Content-Disposition', `attachment; filename="${baseName(filename)}"`);
+        headers.set('Content-Length', obj.size);
+        return new Response(obj.body, { headers });
+      }
+
+      // --- Job routes ---
+      if (path === '/api/jobs/init' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.sourceUrl || !body?.filename) return jsonError('Missing sourceUrl or filename');
+        let filename = body.filename;
+        if (!filename.startsWith('/')) filename = '/' + filename;
+        if (!body.force) {
           const existing = await env.DRIVE_BUCKET.head(filename);
-          if (existing) return Response.json({ status: 'exists', downloadUrl: `/get/${filename}${authParam}` });
+          if (existing) return jsonOk({ status: 'exists', filename, size: existing.size });
         }
-
         const jobId = crypto.randomUUID();
         const id = env.DOWNLOAD_MANAGER.idFromName(jobId);
-        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://fake-host/init', {
-          method: 'POST', body: JSON.stringify({ sourceUrl, filename, jobId }) 
+        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://do/init', {
+          method: 'POST', body: JSON.stringify({ sourceUrl: body.sourceUrl, filename, jobId })
         }));
       }
 
-      // PROCESS CHUNK
-      if (url.pathname === '/process-chunk' && request.method === 'POST') {
-        const body = await safeParseBody(request);
-        if(!body) return jsonError("Invalid JSON");
-        const { jobId, partNumber, start, end } = body;
-        if(!jobId) return jsonError("Missing jobId");
-        const id = env.DOWNLOAD_MANAGER.idFromName(jobId);
-        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://fake-host/chunk', {
-          method: 'POST', body: JSON.stringify({ partNumber, start, end })
-        }));
+      if (path === '/api/jobs/chunk' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.jobId) return jsonError('Missing jobId');
+        const id = env.DOWNLOAD_MANAGER.idFromName(body.jobId);
+        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://do/chunk', { method: 'POST', body: JSON.stringify(body) }));
       }
 
-      // CHECK STATUS
-      if (url.pathname === '/check-status' && request.method === 'POST') {
-        const body = await safeParseBody(request);
-        if(!body) return jsonError("Invalid JSON");
-        const { jobId } = body;
-        if(!jobId) return jsonError("Missing jobId");
-        const id = env.DOWNLOAD_MANAGER.idFromName(jobId);
-        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://fake-host/status'));
+      if (path === '/api/jobs/status' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.jobId) return jsonError('Missing jobId');
+        const id = env.DOWNLOAD_MANAGER.idFromName(body.jobId);
+        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://do/status'));
       }
 
-      // FINISH JOB
-      if (url.pathname === '/finish-job' && request.method === 'POST') {
-        const body = await safeParseBody(request);
-        if(!body) return jsonError("Invalid JSON");
-        const { jobId } = body;
-        if(!jobId) return jsonError("Missing jobId");
-        const id = env.DOWNLOAD_MANAGER.idFromName(jobId);
-        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://fake-host/finish', { 
-            method: 'POST', body: JSON.stringify({}) 
-        }));
+      if (path === '/api/jobs/finish' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.jobId) return jsonError('Missing jobId');
+        const id = env.DOWNLOAD_MANAGER.idFromName(body.jobId);
+        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://do/finish', { method: 'POST' }));
       }
 
-      // LIST FILES
-      if (url.pathname === '/list') {
-        const listed = await env.DRIVE_BUCKET.list({ limit: 500, include: ["customMetadata"] });
-        const files = listed.objects
-            .filter(obj => !obj.key.startsWith('.tokens/'))
-            .map(obj => ({
-                key: obj.key,
-                size: obj.size,
-                uploaded: obj.uploaded,
-                source: obj.customMetadata?.source || 'upload'
-            }));
-        return Response.json({ files });
+      if (path === '/api/jobs/abort' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.jobId) return jsonError('Missing jobId');
+        const id = env.DOWNLOAD_MANAGER.idFromName(body.jobId);
+        return env.DOWNLOAD_MANAGER.get(id).fetch(new Request('https://do/abort', { method: 'POST' }));
       }
 
-      // DELETE FILE
-      if (url.pathname === '/delete' && request.method === 'DELETE') {
-        const filename = url.searchParams.get('filename');
-        await env.DRIVE_BUCKET.delete(filename);
-        return Response.json({ status: 'deleted' });
+      // --- Share routes ---
+      if (path === '/api/shares' && method === 'GET') return handleListShares(env);
+      if (path === '/api/shares/create' && method === 'POST') return handleCreateShare(request, env);
+      if (path === '/api/shares/revoke' && method === 'POST') {
+        const body = await readBody(request);
+        if (!body?.token) return jsonError('Missing token');
+        await env.DRIVE_BUCKET.delete(`.tokens/${body.token}`);
+        return jsonOk({ revoked: true });
       }
 
-      // RENAME FILE
-      if (url.pathname === '/rename' && request.method === 'POST') {
-        const body = await safeParseBody(request);
-        if(!body) return jsonError("Invalid JSON");
-        const { oldName, newName } = body;
-        
-        if(!oldName || !newName) return jsonError("Missing params");
-        const source = await env.DRIVE_BUCKET.get(oldName);
-        if (!source) return jsonError("File not found", 404);
-        const exists = await env.DRIVE_BUCKET.head(newName);
-        if (exists) return jsonError("Name taken", 409);
-
-        await env.DRIVE_BUCKET.put(newName, source.body, {
-            httpMetadata: source.httpMetadata,
-            customMetadata: source.customMetadata
-        });
-        await env.DRIVE_BUCKET.delete(oldName);
-        return Response.json({ status: 'renamed', oldName, newName });
-      }
-
-      // DIRECT DOWNLOAD
-      if (url.pathname.startsWith('/get/')) {
-        const filename = decodeURIComponent(url.pathname.replace('/get/', ''));
-        const object = await env.DRIVE_BUCKET.get(filename);
-        if (!object) return new Response('Not found', { status: 404 });
-        const headers = new Headers();
-        object.writeHttpMetadata(headers);
-        headers.set('Content-Disposition', `attachment; filename="${filename}"`);
-        return new Response(object.body, { headers });
-      }
-
-      // DIRECT UPLOAD
-      if (url.pathname === '/upload' && request.method === 'PUT') {
-        const filename = url.searchParams.get('filename');
-        if(!filename) return jsonError("Missing filename", 400);
-        try {
-          await env.DRIVE_BUCKET.put(filename, request.body, {
-            httpMetadata: { contentType: request.headers.get('Content-Type') || 'application/octet-stream' },
-            customMetadata: { source: 'UPLOAD', timestamp: Date.now().toString() }
-          });
-          return Response.json({ status: 'success', filename });
-        } catch (e) {
-          return Response.json({ status: 'error', error: e.message }, { status: 500 });
-        }
-      }
-
-      return jsonError("API Endpoint Not Found: " + url.pathname, 404);
+      return jsonError('Not Found: ' + path, 404);
     } catch (e) {
-      return jsonError("Internal Worker Error: " + e.message, 500);
+      return jsonError('Internal Error: ' + e.message, 500);
     }
   }
 };
 
 // ============================================================================
-// DURABLE OBJECT: Download Manager
+// Route Handlers
+// ============================================================================
+async function handlePublicShare(url, env) {
+  const code = url.searchParams.get('code') || '';
+  const token = url.pathname.split('/')[2];
+  if (!token) return new Response('Missing token', { status: 400 });
+  const tokenObj = await env.DRIVE_BUCKET.get(`.tokens/${token}`);
+  if (!tokenObj) return new Response('Invalid or expired link', { status: 404 });
+  const meta = await tokenObj.json();
+  if (meta.expires && Date.now() > meta.expires) {
+    await env.DRIVE_BUCKET.delete(`.tokens/${token}`);
+    return new Response('Link expired', { status: 410 });
+  }
+  if (code !== meta.code) return new Response('Invalid code', { status: 403 });
+  const obj = await env.DRIVE_BUCKET.get(meta.filename);
+  if (!obj) return new Response('File not found', { status: 404 });
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set('Content-Disposition', `attachment; filename="${baseName(meta.filename)}"`);
+  return new Response(obj.body, { headers });
+}
+
+async function handleListFiles(url, env) {
+  const prefix = url.searchParams.get('prefix') || '';
+  const delimiter = url.searchParams.get('delimiter') || '';
+  const cursor = url.searchParams.get('cursor') || undefined;
+  const search = (url.searchParams.get('search') || '').toLowerCase();
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '500'), 1000);
+
+  const opts = { limit, include: ['customMetadata', 'httpMetadata'] };
+  if (prefix) opts.prefix = prefix;
+  if (delimiter) opts.delimiter = delimiter;
+  if (cursor) opts.cursor = cursor;
+
+  const listed = await env.DRIVE_BUCKET.list(opts);
+
+  let files = listed.objects
+    .filter(o => !o.key.startsWith('.tokens/') && !o.key.startsWith('.jobs/') && !o.key.endsWith('.emptydir'))
+    .map(o => ({ key: o.key, size: o.size, uploaded: o.uploaded, httpMetadata: o.httpMetadata || {}, customMetadata: o.customMetadata || {} }));
+
+  if (search) files = files.filter(f => f.key.toLowerCase().includes(search));
+
+  const folders = (listed.delimitedPrefixes || []).filter(p => !p.startsWith('.') && p !== '/');
+
+  return jsonOk({ files, folders, truncated: listed.truncated, cursor: listed.truncated ? listed.cursor : null });
+}
+
+async function handleListShares(env) {
+  const listed = await env.DRIVE_BUCKET.list({ prefix: '.tokens/', limit: 200 });
+  const shares = [];
+  for (const obj of listed.objects) {
+    try {
+      const raw = await env.DRIVE_BUCKET.get(obj.key);
+      const data = await raw.json();
+      const token = obj.key.replace('.tokens/', '');
+      shares.push({ token, filename: data.filename, code: data.code, expires: data.expires, created: data.created, expired: data.expires ? Date.now() > data.expires : false, url: `/s/${token}?code=${data.code}` });
+    } catch {}
+  }
+  return jsonOk({ shares });
+}
+
+async function handleCreateShare(request, env) {
+  const body = await readBody(request);
+  if (!body?.filename) return jsonError('Missing filename');
+  const hours = parseInt(body.hours ?? 24);
+  const customCode = (body.customCode || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  const code = customCode || crypto.randomUUID().replace(/-/g, '').substring(0, 8);
+  const expires = hours >= 999 ? null : Date.now() + hours * 3600000;
+  const token = btoa(body.filename).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  await env.DRIVE_BUCKET.put(`.tokens/${token}`, JSON.stringify({ filename: body.filename, expires, code, created: Date.now() }));
+  return jsonOk({ token, code, url: `/s/${token}?code=${code}`, expires: expires ? new Date(expires).toISOString() : null });
+}
+
+// ============================================================================
+// DURABLE OBJECT: DownloadManager
 // ============================================================================
 export class DownloadManager {
-  constructor(state, env) {
-    this.state = state;
-    this.env = env;
-    this.fallbackStatus = { status: 'idle' };
-  }
+  constructor(state, env) { this.state = state; this.env = env; }
 
   async fetch(request) {
-    const startTime = performance.now(); // Track CPU time
     const url = new URL(request.url);
+    const cpuStart = performance.now();
+    try {
+      switch (url.pathname) {
+        case '/init': return await this.doInit(request);
+        case '/chunk': return await this.doChunk(request, cpuStart);
+        case '/finish': return await this.doFinish();
+        case '/status': return await this.doStatus();
+        case '/abort': return await this.doAbort();
+        default: return jsonError('Unknown DO route', 404);
+      }
+    } catch (e) {
+      return jsonError('DO error: ' + e.message, 500);
+    }
+  }
+
+  async doInit(request) {
+    const { sourceUrl, filename, jobId } = await request.json();
+    const CHUNK = 20 * 1024 * 1024;
+
+    let head;
+    try { head = await fetch(sourceUrl, { method: 'HEAD' }); }
+    catch (e) { return jsonError('Cannot reach source: ' + e.message); }
+    console.log("doInit, url: ",sourceUrl);
+    console.log("doInit, filename: ",filename);
+    console.log("doInit, jobId: ",jobId);
+
+    const totalSize = parseInt(head.headers.get('content-length')) || 0;
+    const contentType = head.headers.get('content-type') || 'application/octet-stream';
+
+    let rangeOk = head.headers.get('accept-ranges') === 'bytes';
+    console.log("doInit, head.headers: ",head.headers);
+    console.log("doInit, rangeOk: ",rangeOk);
+    console.log("doInit, totalSize: ",totalSize);
     
-    let body = {};
-    if (request.method === 'POST') {
-        try { body = await request.json(); } catch(e) {}
+    if (!rangeOk && totalSize > 0) {
+      try { rangeOk = (await fetch(sourceUrl, { headers: { Range: 'bytes=0-0' } })).status === 206; } catch {}
     }
 
-    // --- INIT ---
-    if (url.pathname === '/init') {
-      const { sourceUrl, filename, jobId } = body;
-      
-      let headRes;
-      try {
-        headRes = await fetch(sourceUrl, { method: 'HEAD' });
-      } catch(e) {
-        return Response.json({ error: "Connection failed: " + e.message }, { status: 400 });
-      }
-      
-      const totalSize = parseInt(headRes.headers.get('content-length')) || 0;
-      const contentType = headRes.headers.get('content-type');
-      const CHUNK_SIZE = 20 * 1024 * 1024; 
+    if (!rangeOk && totalSize === 0) {
+      return jsonError('Cannot download: source does not support Range requests and Content-Length is unknown. Please use a source with known file size.');
+    }
 
-      let supportsParallel = false;
-      if (headRes.headers.get('Accept-Ranges') === 'bytes') {
-        supportsParallel = true;
-      } else {
-        try {
-            const testRes = await fetch(sourceUrl, { headers: { 'Range': 'bytes=0-0' } });
-            if (testRes.status === 206) supportsParallel = true;
-        } catch(e) {}
+    if (!rangeOk || totalSize === 0 || totalSize < CHUNK) {
+      await this.state.storage.put('status', { mode: 'single', status: 'downloading', filename, totalSize, started: Date.now() });
+      this.state.waitUntil(this.singleStream(sourceUrl, filename, contentType));
+      return jsonOk({ mode: 'single', totalSize, jobId });
+    }
+
+    const mp = await this.env.DRIVE_BUCKET.createMultipartUpload(filename, {
+      httpMetadata: { contentType },
+      customMetadata: { source: sourceUrl, timestamp: Date.now().toString() }
+    });
+
+    const ranges = [];
+    let s = 0, p = 1;
+    while (s < totalSize) { const e = Math.min(s + CHUNK - 1, totalSize - 1); ranges.push({ partNumber: p++, start: s, end: e }); s += CHUNK; }
+
+    await this.state.storage.put('job', { uploadId: mp.uploadId, filename, sourceUrl, totalSize, totalParts: ranges.length });
+    await this.state.storage.put('status', { mode: 'parallel', status: 'downloading', filename, totalSize, totalParts: ranges.length, completedParts: 0, bytesDownloaded: 0, started: Date.now() });
+
+    return jsonOk({ mode: 'parallel', totalSize, ranges, jobId });
+  }
+
+  async doChunk(request, cpuStart) {
+    try {
+      const { partNumber, start, end } = await request.json();
+      const job = await this.state.storage.get('job');
+      if (!job) return jsonOk({ status: 'failed', error: 'No active job' });
+      if (await this.state.storage.get('aborted')) return jsonOk({ status: 'failed', error: 'Job aborted' });
+
+      const mp = this.env.DRIVE_BUCKET.resumeMultipartUpload(job.filename, job.uploadId);
+      const res = await fetch(job.sourceUrl, { headers: { Range: `bytes=${start}-${end}` } });
+      if (res.status !== 206 && res.status !== 200) {
+        return jsonOk({ status: 'failed', error: 'Range request failed: ' + res.status });
       }
 
-      if (!supportsParallel || totalSize === 0 || totalSize < CHUNK_SIZE) {
-        this.state.waitUntil(this.singleStreamDownload(sourceUrl, filename, contentType));
-        return Response.json({ mode: 'single', totalSize, jobId, message: "Background Stream (Single)" });
+      const part = await mp.uploadPart(partNumber, res.body);
+      await this.state.storage.put(`part_${partNumber}`, { partNumber, etag: part.etag });
+
+      const chunkSize = end - start + 1;
+      const status = await this.state.storage.get('status');
+      if (status) {
+        status.completedParts = (status.completedParts || 0) + 1;
+        status.bytesDownloaded = (status.bytesDownloaded || 0) + chunkSize;
+        await this.state.storage.put('status', status);
       }
 
-      const mp = await this.env.DRIVE_BUCKET.createMultipartUpload(filename, {
+      return jsonOk({ status: 'done', partNumber, chunkSize, cpuTime: performance.now() - cpuStart });
+    } catch (e) {
+      return jsonOk({ status: 'failed', error: e.message });
+    }
+  }
+
+  async doFinish() {
+    const job = await this.state.storage.get('job');
+    if (!job) return jsonError('No active job', 404);
+
+    const partEntries = await this.state.storage.list({ prefix: 'part_' });
+    const parts = Array.from(partEntries.values()).sort((a, b) => a.partNumber - b.partNumber);
+    if (!parts.length) return jsonError('No parts uploaded');
+
+    const mp = this.env.DRIVE_BUCKET.resumeMultipartUpload(job.filename, job.uploadId);
+    await mp.complete(parts);
+
+    await this.state.storage.put('status', { mode: 'parallel', status: 'completed', filename: job.filename, totalSize: job.totalSize, totalParts: job.totalParts, completedParts: job.totalParts, finished: Date.now() });
+    const delKeys = ['job', ...Array.from(partEntries.keys())];
+    await this.state.storage.delete(delKeys);
+
+    return jsonOk({ status: 'completed', filename: job.filename });
+  }
+
+  async doStatus() {
+    const status = await this.state.storage.get('status');
+    return jsonOk(status || { status: 'idle' });
+  }
+
+  async doAbort() {
+    await this.state.storage.put('aborted', true);
+    const job = await this.state.storage.get('job');
+    if (job) { try { (this.env.DRIVE_BUCKET.resumeMultipartUpload(job.filename, job.uploadId)).abort(); } catch {} }
+    await this.state.storage.put('status', { status: 'aborted' });
+    await this.state.storage.delete('job');
+    return jsonOk({ status: 'aborted' });
+  }
+
+  async singleStream(sourceUrl, filename, contentType) {
+    try {
+      const res = await fetch(sourceUrl);
+      await this.env.DRIVE_BUCKET.put(filename, res.body, {
         httpMetadata: { contentType },
         customMetadata: { source: sourceUrl, timestamp: Date.now().toString() }
       });
-
-      const ranges = [];
-      let start = 0;
-      let partNumber = 1;
-
-      while (start < totalSize) {
-        let end = start + CHUNK_SIZE - 1;
-        if (end >= totalSize) end = totalSize - 1;
-        ranges.push({ partNumber, start, end });
-        start += CHUNK_SIZE;
-        partNumber++;
-      }
-
-      await this.state.storage.put('job_meta', { uploadId: mp.uploadId, filename, sourceUrl });
-      await this.state.storage.delete(ranges.map(r => `part_${r.partNumber}`));
-
-      return Response.json({ mode: 'parallel', totalSize, ranges, jobId });
+      await this.state.storage.put('status', { mode: 'single', status: 'completed', filename, finished: Date.now() });
+    } catch (e) {
+      await this.state.storage.put('status', { mode: 'single', status: 'failed', filename, error: e.message });
     }
-
-    // --- PROCESS CHUNK ---
-    if (url.pathname === '/chunk') {
-      const { partNumber, start, end } = body;
-      const meta = await this.state.storage.get('job_meta');
-      if (!meta) return Response.json({ error: 'Job not found' }, { status: 404 });
-
-      const mp = this.env.DRIVE_BUCKET.resumeMultipartUpload(meta.filename, meta.uploadId);
-
-      try {
-        const res = await fetch(meta.sourceUrl, { headers: { 'Range': `bytes=${start}-${end}` } });
-        if (res.status !== 206 && res.status !== 200) throw new Error("Range failed");
-
-        const part = await mp.uploadPart(partNumber, res.body);
-        await this.state.storage.put(`part_${partNumber}`, { partNumber, etag: part.etag });
-
-        // Calculate Server CPU Time used for this chunk
-        const cpuTime = performance.now() - startTime;
-        return Response.json({ status: 'done', partNumber, cpuTime });
-      } catch(err) {
-        return Response.json({ error: err.message }, { status: 500 });
-      }
-    }
-
-    // --- FINISH ---
-    if (url.pathname === '/finish') {
-      const meta = await this.state.storage.get('job_meta');
-      if (!meta) return Response.json({ error: 'Job not found' }, { status: 404 });
-
-      const list = await this.state.storage.list({ prefix: 'part_' });
-      const parts = Array.from(list.values());
-
-      if (parts.length === 0) return Response.json({ error: "No parts found." }, { status: 400 });
-
-      const mp = this.env.DRIVE_BUCKET.resumeMultipartUpload(meta.filename, meta.uploadId);
-      parts.sort((a, b) => a.partNumber - b.partNumber);
-
-      try {
-        await mp.complete(parts);
-        await this.state.storage.deleteAll();
-        return Response.json({ status: 'completed', downloadUrl: `/get/${meta.filename}` });
-      } catch(e) {
-        return Response.json({ error: "R2 Complete Failed: " + e.message }, { status: 500 });
-      }
-    }
-
-    if (url.pathname === '/status') return Response.json(this.fallbackStatus);
-
-    return Response.json({ error: 'DO Method Not Found' }, { status: 404 });
   }
-
-  async singleStreamDownload(sourceUrl, filename, contentType) {
-      this.fallbackStatus = { status: 'running' };
-      try {
-          const res = await fetch(sourceUrl);
-          await this.env.DRIVE_BUCKET.put(filename, res.body, {
-              httpMetadata: { contentType },
-              customMetadata: { source: sourceUrl, timestamp: Date.now().toString() }
-          });
-          this.fallbackStatus = { status: 'completed' };
-      } catch(e) {
-          this.fallbackStatus = { status: 'failed', error: e.message };
-      }
-  }
-}
-
-// ============================================================
-// FRONTEND UI
-// ============================================================
-function renderAdminPanel(currentKey) {
-  return `<!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <title>R2 Manager</title>
-    <style>
-      :root { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f4f4f9; }
-      body { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-      h1 { color: #f6821f; margin-bottom: 20px; }
-      .tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
-      .tab { padding: 10px 20px; cursor: pointer; font-weight: bold; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px;}
-      .tab.active { color: #f6821f; border-bottom-color: #f6821f; }
-      .tab-content { display: none; }
-      .tab-content.active { display: block; }
-      .card { background: #fafafa; border: 1px solid #eee; padding: 15px; margin-top: 15px; border-radius: 4px; }
-      input[type="text"], input[type="password"] { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;}
-      input[type="file"] { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; background: white; border-radius: 4px; }
-      button { background: #9ae6bc; color: white; border: none; padding: 10px; margin-top: 20px; border-radius: 4px; cursor: pointer; width:100% }
-      button:hover { opacity: 0.9; }
-      button:disabled { background: #ccc; cursor: not-allowed; }
-      table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; table-layout: fixed; }
-      th, td { padding: 10px; border-bottom: 1px solid #eee; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      th:nth-child(1) { width: 40%; } th:nth-child(2) { width: 20%; } th:nth-child(3) { width: 10%; } th:nth-child(4) { width: 30%; }
-      .action-btn { cursor: pointer; margin-right: 12px; text-decoration: none; font-size: 16px; border:none; background:none; padding:0; }
-      dialog { border: none; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); padding: 25px; width: 400px; max-width: 90vw; }
-      dialog::backdrop { background: rgba(0,0,0,0.5); }
-      select { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 4px; background: white; }
-      
-      /* NEW STATS STYLES */
-      .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 15px; display:none; }
-      .stat-box { background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px; text-align: center; }
-      .stat-val { font-weight: bold; font-size: 16px; color: #333; }
-      .stat-lbl { font-size: 11px; color: #666; text-transform: uppercase; }
-      .info-row { font-size: 12px; color: #666; margin-top: 5px; text-align: right; }
-    </style>
-  </head>
-  <body>
-    <div style="display:flex; justify-content:space-between; align-items:center">
-      <h1>☁️ R2 Manager</h1>
-      <div style="margin-bottom: 10px; width: 40%">
-        <input type="password" id="apiKey" value="${currentKey}" placeholder="Auth Key">
-      </div>
-    </div>
-
-    <div class="tabs">
-      <div class="tab active" onclick="switchTab('downloader')">Remote Downloader</div>
-      <div class="tab" onclick="switchTab('upload')">Direct Upload</div>
-      <div class="tab" onclick="switchTab('library')">Library</div>
-    </div>
-
-    <!-- REMOTE DOWNLOADER -->
-    <div id="downloader" class="tab-content active">
-      <div class="card">
-        <h3>New Download Job</h3>
-        <input type="text" id="sourceUrl" placeholder="Source URL (https://...)" required>
-        <input type="text" id="filename" placeholder="Save Filename (video.mp4)" required>
-        <button id="startBtn" onclick="startDownload()">Start Download</button>
-
-        <div id="progCont" style="margin-top:20px; background:#eee; height:20px; border-radius:10px; overflow:hidden; display:none">
-          <div id="progBar" style="height:100%; background:#4caf50; width:0%; transition:width 0.3s"></div>
-        </div>
-        <div id="jobInfo" class="info-row"></div>
-
-        <!-- NEW STATS GRID -->
-        <div id="statsGrid" class="stats-grid">
-           <div class="stat-box">
-              <div class="stat-val" id="st-speed">0 MB/s</div>
-              <div class="stat-lbl">Speed</div>
-           </div>
-           <div class="stat-box">
-              <div class="stat-val" id="st-cpu">0ms</div>
-              <div class="stat-lbl">Server CPU</div>
-           </div>
-           <div class="stat-box">
-              <div class="stat-val" id="st-chunks">0 / 0</div>
-              <div class="stat-lbl">Chunks</div>
-           </div>
-        </div>
-        
-        <div id="logs" style="margin-top:20px; font-size:11px; color:#666; max-height:150px; overflow-y:auto; background:#fafafa; padding:10px; border:1px solid #eee; font-family:monospace;"></div>
-      </div>
-    </div>
-
-    <!-- DIRECT UPLOAD -->
-    <div id="upload" class="tab-content">
-      <div class="card">
-        <h3>Upload File</h3>
-        <input type="file" id="fileInput">
-        <input type="text" id="uploadName" placeholder="Rename (Optional, defaults to file name)">
-        <button id="uploadBtn" onclick="uploadFile()">Upload File</button>
-        <div id="uploadStatus" style="margin-top:15px; font-weight:bold; color:#555"></div>
-      </div>
-    </div>
-
-    <!-- LIBRARY -->
-    <div id="library" class="tab-content">
-      <div style="display:flex; justify-content:space-between; align-items:center">
-        <h3>Files in Bucket</h3>
-        <button onclick="loadLibrary()" style="width: auto; padding: 5px 15px;">Refresh</button>
-      </div>
-      <table id="fileTable">
-        <thead><tr><th>Filename</th><th>Size</th><th>Source</th><th>Actions</th></tr></thead>
-        <tbody><tr><td colspan="4">Loading...</td></tr></tbody>
-      </table>
-    </div>
-
-    <!-- DIALOGS (Rename & Share) -->
-    <dialog id="renameDialog">
-      <h3>Rename File</h3>
-      <input type="hidden" id="renameOld">
-      <label>New Name:</label>
-      <input type="text" id="renameNew">
-      <div style="margin-top:20px; display:flex; gap:10px">
-        <button onclick="document.getElementById('renameDialog').close()" style="background:#ddd; color:#333">Cancel</button>
-        <button onclick="doRename()">Save</button>
-      </div>
-    </dialog>
-
-    <dialog id="shareDialog">
-      <h3>Create Share Link</h3>
-      <p style="font-size:13px; color:#666; margin-top:0">Generate a public link that hides your API key.</p>
-      <input type="hidden" id="shareFile">
-      <label>Custom Code (Optional):</label>
-      <input type="text" id="shareCode" placeholder="leave empty for random">
-      <label>Expires In:</label>
-      <select id="shareDuration">
-        <option value="1">1 Hour</option>
-        <option value="24" selected>24 Hours</option>
-        <option value="168">7 Days</option>
-        <option value="720">30 Days</option>
-        <option value="999">Never Expires</option>
-      </select>
-      <div id="shareResult" style="display:none; margin-top:15px; background:#f0f8ff; padding:10px; border-radius:4px;">
-        <label style="font-size:11px">Public Link:</label>
-        <input type="text" id="shareUrl" readonly style="margin-top:2px; font-size:12px">
-        <button onclick="copyShare()" style="margin-top:5px; padding:5px; font-size:12px">Copy Link</button>
-      </div>
-      <div style="margin-top:20px; display:flex; gap:10px">
-        <button onclick="closeShare()" style="background:#ddd; color:#333">Close</button>
-        <button onclick="doShare()" id="btnShare">Generate Link</button>
-      </div>
-    </dialog>
-
-    <script>
-      const logDiv = document.getElementById('logs');
-      const log = (msg) => { logDiv.innerHTML += '<div>' + msg + '</div>'; logDiv.scrollTop = logDiv.scrollHeight; };
-      const safeJson = async (res) => {
-          const text = await res.text();
-          try { return JSON.parse(text); } 
-          catch(e) { throw new Error(res.ok ? "Invalid JSON" : "Error: " + text.substring(0,100)); }
-      };
-      const authFetch = (url, opts = {}) => {
-        const key = document.getElementById('apiKey').value;
-        const headers = opts.headers || {};
-        if(key) headers['x-api-key'] = key;
-        if (!headers['Content-Type'] && opts.method !== 'GET') headers['Content-Type'] = 'application/json';
-        return fetch(url, { ...opts, headers });
-      };
-      function switchTab(id) {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById(id).classList.add('active');
-        if(id === 'library') loadLibrary();
-      }
-
-      // --- DOWNLOADER ---
-      async function startDownload() {
-        const sourceUrl = document.getElementById('sourceUrl').value;
-        const filename = document.getElementById('filename').value;
-        const btn = document.getElementById('startBtn');
-        const progCont = document.getElementById('progCont');
-        const progBar = document.getElementById('progBar');
-        const jobInfo = document.getElementById('jobInfo');
-        const statsGrid = document.getElementById('statsGrid');
-
-        if(!sourceUrl || !filename) return alert("Fill in fields");
-
-        btn.disabled = true;
-        progCont.style.display = 'block';
-        statsGrid.style.display = 'none';
-        logDiv.innerHTML = 'Starting...';
-        jobInfo.innerText = '';
-        
-        try {
-          const initRes = await authFetch('/init-job', {
-            method: 'POST', body: JSON.stringify({ sourceUrl, filename })
-          });
-          const initData = await safeJson(initRes);
-          if(initData.error) throw new Error(initData.error);
-          
-          if(initData.status === 'exists') {
-             log("✅ File already exists!");
-             btn.disabled = false;
-             return;
-          }
-
-          const jobId = initData.jobId;
-
-          if (initData.mode === 'single') {
-             log("⚠️ " + initData.message);
-             const poll = setInterval(async () => {
-                 try {
-                     const sRes = await authFetch('/check-status', { method: 'POST', body: JSON.stringify({ jobId }) });
-                     const sData = await safeJson(sRes);
-                     if (sData.status === 'completed') {
-                         clearInterval(poll);
-                         progBar.style.width = '100%';
-                         log("✅ Done!");
-                         btn.disabled = false;
-                         loadLibrary();
-                     }
-                 } catch(e) {}
-             }, 3000);
-             return;
-          }
-
-          // Parallel Mode
-          const ranges = initData.ranges;
-          const totalSizeMB = (initData.totalSize / 1024 / 1024).toFixed(2);
-          jobInfo.innerText = \`Total Size: \${totalSizeMB} MB\`;
-          statsGrid.style.display = 'grid';
-
-          let completed = 0;
-          let idx = 0;
-          let totalCpu = 0;
-          const startTime = Date.now();
-          
-          const process = async () => {
-             if (idx >= ranges.length) return;
-             const range = ranges[idx++];
-             let attempts = 0;
-             while(attempts++ < 3) {
-                try {
-                    const r = await authFetch('/process-chunk', {
-                        method: 'POST', body: JSON.stringify({ jobId, partNumber: range.partNumber, start: range.start, end: range.end })
-                    });
-                    const rData = await safeJson(r);
-                    if(rData.status === 'done') {
-                        completed++;
-                        
-                        // METRICS UPDATE
-                        if(rData.cpuTime) totalCpu += rData.cpuTime;
-                        const pct = Math.round((completed/ranges.length)*100);
-                        progBar.style.width = pct + '%';
-                        
-                        const elapsedSec = (Date.now() - startTime) / 1000;
-                        const downloadedMB = (completed * 20); // Approx 20MB chunks
-                        const speed = (downloadedMB / elapsedSec).toFixed(2);
-                        
-                        document.getElementById('st-chunks').innerText = \`\${completed} / \${ranges.length}\`;
-                        document.getElementById('st-speed').innerText = \`\${speed} MB/s\`;
-                        document.getElementById('st-cpu').innerText = \`\${Math.round(totalCpu)}ms\`;
-                        
-                        break;
-                    }
-                } catch(e) { await new Promise(r => setTimeout(r, 1000)); }
-             }
-             await process();
-          };
-
-          const workers = [process(), process(), process(), process()];
-          await Promise.all(workers);
-
-          log("Finalizing...");
-          let finAttempts = 0;
-          while(finAttempts++ < 3) {
-              try {
-                  const fRes = await authFetch('/finish-job', { method: 'POST', body: JSON.stringify({ jobId }) });
-                  const fData = await safeJson(fRes);
-                  if(!fData.error) {
-                      log("✅ Done!");
-                      btn.disabled = false;
-                      loadLibrary();
-                      return;
-                  }
-              } catch(e) { await new Promise(r => setTimeout(r, 2000)); }
-          }
-          throw new Error("Finalize failed");
-
-        } catch(e) {
-          log("❌ Error: " + e.message);
-          btn.disabled = false;
-        }
-      }
-
-      // --- OTHER FUNCTIONS (Upload, Library, etc) ---
-      async function uploadFile() {
-          const file = document.getElementById('fileInput').files[0];
-          const nameOverride = document.getElementById('uploadName').value;
-          const status = document.getElementById('uploadStatus');
-          const btn = document.getElementById('uploadBtn');
-          if(!file) return alert("Select file");
-          btn.disabled = true; status.innerText = "Uploading...";
-          try {
-              const key = document.getElementById('apiKey').value;
-              const headers = { 'Content-Type': file.type };
-              if(key) headers['x-api-key'] = key;
-              const res = await fetch('/upload?filename=' + encodeURIComponent(nameOverride || file.name), { method: 'PUT', headers, body: file });
-              const data = await safeJson(res);
-              if(data.error) throw new Error(data.error);
-              status.innerText = "✅ Success!";
-              setTimeout(() => switchTab('library'), 1500);
-          } catch(e) { status.innerText = "❌ Error: " + e.message; }
-          btn.disabled = false;
-      }
-
-      async function loadLibrary() {
-        const tbody = document.querySelector('#fileTable tbody');
-        tbody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
-        try {
-          const res = await authFetch('/list');
-          const data = await safeJson(res);
-          if(!data.files?.length) { tbody.innerHTML = '<tr><td colspan="4">No files</td></tr>'; return; }
-          const key = document.getElementById('apiKey').value;
-          const authParam = key ? '?key='+encodeURIComponent(key) : '';
-          tbody.innerHTML = data.files.map(f => {
-            const dlLink = \`/get/\${encodeURIComponent(f.key)}\${authParam}\`;
-            const src = f.source && f.source.startsWith('http') ? \`<a href="\${f.source}" target="_blank" class="action-btn" title="Src">🖥️</a>\` : '';
-            return \`<tr><td title="\${f.key}">\${f.key}</td><td>\${(f.size/1e6).toFixed(2)} MB</td><td>\${src}</td>
-            <td><a href="\${dlLink}" target="_blank" class="action-btn">⬇️</a>
-            <span class="action-btn" onclick="openRename('\${f.key}')">✏️</span>
-            <span class="action-btn" onclick="openShare('\${f.key}')">🔗</span>
-            <span class="action-btn" onclick="deleteFile('\${f.key}')" style="color:red">❌</span></td></tr>\`;
-          }).join('');
-        } catch(e) { tbody.innerHTML = '<tr><td colspan="4">Error</td></tr>'; }
-      }
-
-      // Dialog Helpers
-      function openRename(n) { document.getElementById('renameOld').value=n; document.getElementById('renameNew').value=n; document.getElementById('renameDialog').showModal(); }
-      async function doRename() {
-          const oldName = document.getElementById('renameOld').value;
-          const newName = document.getElementById('renameNew').value;
-          if(!newName || newName===oldName) return document.getElementById('renameDialog').close();
-          try {
-              const res = await authFetch('/rename', { method:'POST', body:JSON.stringify({oldName, newName}) });
-              if((await safeJson(res)).error) throw new Error('Fail');
-              document.getElementById('renameDialog').close(); loadLibrary();
-          } catch(e) { alert(e.message); }
-      }
-      function openShare(n) { document.getElementById('shareFile').value=n; document.getElementById('shareCode').value=''; document.getElementById('shareResult').style.display='none'; document.getElementById('btnShare').style.display='inline-block'; document.getElementById('shareDialog').showModal(); }
-      function closeShare() { document.getElementById('shareDialog').close(); }
-      async function doShare() {
-          const filename = document.getElementById('shareFile').value;
-          const hours = document.getElementById('shareDuration').value;
-          const customCode = document.getElementById('shareCode').value;
-          const btn = document.getElementById('btnShare');
-          btn.innerText="Generating..."; btn.disabled=true;
-          try {
-              const res = await authFetch('/share/generate', { method:'POST', body:JSON.stringify({filename, hours:parseInt(hours), customCode}) });
-              const data = await safeJson(res);
-              if(data.error) throw new Error(data.error);
-              document.getElementById('shareUrl').value = \`\${new URL(document.URL).origin}\${data.url}\`;
-              document.getElementById('shareResult').style.display='block'; btn.style.display='none';
-          } catch(e) { alert(e.message); }
-          btn.innerText="Generate"; btn.disabled=false;
-      }
-      function copyShare() { const u=document.getElementById('shareUrl'); u.select(); document.execCommand('copy'); navigator.clipboard.writeText(u.value); alert("Copied!"); }
-      async function deleteFile(n) { if(confirm('Delete '+n+'?')) { await authFetch('/delete?filename='+encodeURIComponent(n), {method:'DELETE'}); loadLibrary(); } }
-    </script>
-  </body>
-  </html>`;
 }

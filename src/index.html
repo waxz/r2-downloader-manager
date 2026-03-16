@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
+<title>R2 Drive</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --c-primary:#f6821f;--c-primary-h:rgba(246,130,31,.1);--c-bg:#f0f2f5;--c-card:#fff;
+  --c-border:#dfe6e9;--c-text:#2d3436;--c-muted:#636e72;--c-success:#00b894;
+  --c-danger:#d63031;--c-info:#0984e3;--c-warning:#fdcb6e;--radius:8px;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.1);
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--c-bg);color:var(--c-text);line-height:1.5}
+.app{max-width:960px;margin:0 auto;padding:16px}
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.header h1{font-size:22px;white-space:nowrap}
+.header h1 span{color:var(--c-primary)}
+.auth-box{display:flex;align-items:center;gap:8px}
+.auth-box input{width:180px}
+.auth-dot{width:10px;height:10px;border-radius:50%;background:#b2bec3}
+.auth-dot.ok{background:var(--c-success)}
+/* Inputs */
+input[type=text],input[type=password],select,textarea{
+  padding:8px 12px;border:1px solid var(--c-border);border-radius:var(--radius);font-size:14px;
+  width:100%;background:#fff;color:var(--c-text);outline:none;transition:border .15s}
+input:focus,select:focus{border-color:var(--c-primary)}
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 16px;
+  border:none;border-radius:var(--radius);font-size:13px;font-weight:600;cursor:pointer;
+  transition:all .15s;white-space:nowrap}
+.btn-primary{background:var(--c-primary);color:#fff}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-ghost{background:transparent;color:var(--c-muted);border:1px solid var(--c-border)}
+.btn-ghost:hover{background:var(--c-bg)}
+.btn-danger{background:var(--c-danger);color:#fff}
+.btn-sm{padding:5px 10px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+/* Tabs */
+.tabs{display:flex;gap:2px;border-bottom:2px solid var(--c-border);margin-bottom:20px;overflow-x:auto}
+.tab{padding:10px 18px;font-size:14px;font-weight:600;color:var(--c-muted);cursor:pointer;
+  border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;white-space:nowrap;user-select:none}
+.tab:hover{color:var(--c-text)}
+.tab.active{color:var(--c-primary);border-bottom-color:var(--c-primary)}
+.panel{display:none}.panel.active{display:block}
+/* Cards */
+.card{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius);
+  padding:16px;margin-bottom:16px;box-shadow:var(--shadow)}
+.card h3{font-size:15px;margin-bottom:12px}
+/* Grid helpers */
+.row{display:flex;gap:10px;margin-bottom:10px}.row>*{flex:1}
+/* Progress */
+.progress{height:6px;background:#ecf0f1;border-radius:3px;overflow:hidden;margin:8px 0}
+.progress-bar{height:100%;background:var(--c-primary);border-radius:3px;transition:width .3s}
+.progress-bar.done{background:var(--c-success)}
+.progress-bar.fail{background:var(--c-danger)}
+/* Badge */
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+.badge-running{background:#dfe6fd;color:#3b5bdb}.badge-completed{background:#d3f9d8;color:#2b8a3e}
+.badge-failed{background:#ffe3e3;color:#c92a2a}.badge-queued{background:#fff3bf;color:#e67700}
+.badge-single{background:#e3fafc;color:#1098ad}
+/* Jobs list */
+.job-item{border:1px solid var(--c-border);border-radius:var(--radius);padding:12px;margin-bottom:8px;background:#fafafa}
+.job-header{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.job-filename{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.job-stats{display:flex;gap:16px;font-size:12px;color:var(--c-muted);margin-top:6px;flex-wrap:wrap}
+.job-stats span{display:flex;align-items:center;gap:4px}
+/* File explorer */
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.toolbar .search{max-width:240px}
+.breadcrumbs{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--c-muted);margin-bottom:12px;flex-wrap:wrap}
+.breadcrumbs a{color:var(--c-info);cursor:pointer;text-decoration:none}
+.breadcrumbs a:hover{text-decoration:underline}
+.file-table{width:100%;border-collapse:collapse;font-size:13px}
+.file-table th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--c-border);font-size:12px;
+  color:var(--c-muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap}
+.file-table th:hover{color:var(--c-text)}
+.file-table td{padding:8px 10px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
+.file-table tr:hover td{background:var(--c-primary-h)}
+.file-table .fname{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-table .actions{white-space:nowrap}
+.act{cursor:pointer;background:none;border:none;font-size:15px;padding:2px 5px;opacity:.7;transition:opacity .1s}
+.act:hover{opacity:1}
+.file-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.file-card{border:1px solid var(--c-border);border-radius:var(--radius);padding:12px;text-align:center;
+  cursor:pointer;transition:all .15s;background:#fff;position:relative}
+.file-card:hover{border-color:var(--c-primary);box-shadow:var(--shadow)}
+.file-card .icon{font-size:32px;margin-bottom:6px}
+.file-card .name{font-size:12px;word-break:break-all;line-height:1.3}
+.file-card .size{font-size:11px;color:var(--c-muted);margin-top:4px}
+.file-card input[type=checkbox]{position:absolute;top:6px;left:6px}
+.folder-row{cursor:pointer;font-weight:600}
+.folder-row:hover td{background:var(--c-primary-h)!important}
+.empty-state{text-align:center;padding:40px;color:var(--c-muted);font-size:14px}
+/* Dropzone */
+.dropzone{border:2px dashed var(--c-border);border-radius:var(--radius);padding:40px;text-align:center;
+  color:var(--c-muted);cursor:pointer;transition:all .2s;margin-bottom:12px}
+.dropzone.over{border-color:var(--c-primary);background:var(--c-primary-h);color:var(--c-primary)}
+.dropzone p{margin:8px 0}
+.upload-queue{margin-top:12px}
+.upload-item{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--c-border);
+  border-radius:var(--radius);margin-bottom:6px;font-size:13px}
+.upload-item .uname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upload-item .progress{flex:0 0 120px;margin:0}
+/* Shares */
+.share-item{display:flex;align-items:center;gap:12px;padding:10px;border:1px solid var(--c-border);
+  border-radius:var(--radius);margin-bottom:6px;font-size:13px;flex-wrap:wrap}
+.share-item .sf{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:120px}
+/* Toast */
+.toast-area{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:360px}
+.toast{padding:10px 16px;border-radius:var(--radius);font-size:13px;font-weight:500;color:#fff;
+  box-shadow:var(--shadow-lg);animation:tslide .3s ease;display:flex;align-items:center;gap:8px}
+.toast-success{background:var(--c-success)}.toast-error{background:var(--c-danger)}.toast-info{background:var(--c-info)}
+@keyframes tslide{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+/* Dialog */
+dialog{border:none;border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:24px;width:420px;max-width:92vw;margin:auto}
+dialog:modal{max-width:100%;position:fixed;left:0%;top:0%;transform:translate(0%,0%)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h3{margin-bottom:16px}
+dialog .field{margin-bottom:12px}
+dialog .field label{display:block;font-size:12px;font-weight:600;color:var(--c-muted);margin-bottom:4px}
+dialog .btns{display:flex;gap:8px;margin-top:18px}
+/* Responsive */
+@media(max-width:600px){
+  .header{flex-direction:column;align-items:flex-start}
+  .auth-box input{width:100%}
+  .row{flex-direction:column}
+  .toolbar{flex-direction:column;align-items:stretch}
+  .toolbar .search{max-width:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Header -->
+  <div class="header">
+    <h1>☁️ R2 <span>Drive</span></h1>
+    <div class="auth-box">
+      <div class="auth-dot" id="authDot"></div>
+      <input type="password" id="apiKey" placeholder="API Key" autocomplete="off">
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs" id="tabsBar">
+    <div class="tab active" data-tab="downloads">⬇ Downloads</div>
+    <div class="tab" data-tab="upload">⬆ Upload</div>
+    <div class="tab" data-tab="files">📁 Files</div>
+    <div class="tab" data-tab="shares">🔗 Shares</div>
+  </div>
+
+  <!-- Downloads Panel -->
+  <div class="panel active" id="p-downloads">
+    <div class="card">
+      <h3>New Remote Download</h3>
+      <div class="row">
+        <input type="text" id="dlUrl" placeholder="Source URL (https://...)">
+      </div>
+      <div class="row">
+        <input type="text" id="dlPrefix" placeholder="Folder path (optional, e.g. downloads/)">
+        <button class="btn btn-ghost btn-sm" onclick="DL.setFromFM()" title="Use current folder">📁</button>
+      </div>
+      <div class="row">
+        <input type="text" id="dlName" placeholder="Save as filename (e.g. video.mp4)">
+        <div style="flex:0 0 auto;display:flex;align-items:end">
+          <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" id="dlForce"> Overwrite
+          </label>
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="DL.start()" id="dlStartBtn">Start Download</button>
+    </div>
+    <div id="jobsList">
+      <div class="empty-state" id="jobsEmpty">No active downloads</div>
+    </div>
+  </div>
+
+  <!-- Upload Panel -->
+  <div class="panel" id="p-upload">
+    <div class="card">
+      <h3>Upload Files</h3>
+      <div class="row">
+        <input type="text" id="uploadPrefix" placeholder="Folder path (optional, e.g. photos/)">
+        <button class="btn btn-ghost btn-sm" onclick="UL.setFromFM()" title="Use current folder">📁</button>
+      </div>
+      <div class="row">
+        <input type="text" id="uploadFilename" placeholder="Filename (optional - uses original if empty)">
+        <div style="flex:0 0 auto;display:flex;align-items:end">
+          <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" id="uploadMkdir" checked> Create folder
+          </label>
+        </div>
+      </div>
+      <div class="dropzone" id="dropzone">
+        <div style="font-size:36px">📂</div>
+        <p><strong>Drop files here</strong> or click to browse</p>
+        <p style="font-size:12px">Multiple files supported</p>
+        <input type="file" id="fileInput" multiple hidden>
+      </div>
+      <div class="upload-queue" id="uploadQueue"></div>
+    </div>
+  </div>
+
+  <!-- Files Panel -->
+  <div class="panel" id="p-files">
+    <div class="toolbar">
+      <input type="text" class="search" id="fileSearch" placeholder="🔍  Search files...">
+      <select id="fileSort" style="width:auto;flex:0 0 auto">
+        <option value="name-asc">Name ↑</option>
+        <option value="name-desc">Name ↓</option>
+        <option value="size-desc">Size ↓</option>
+        <option value="size-asc">Size ↑</option>
+        <option value="date-desc">Newest</option>
+        <option value="date-asc">Oldest</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" id="viewToggle" onclick="FM.toggleView()">☰ List</button>
+      <button class="btn btn-ghost btn-sm" onclick="FM.promptMkdir()">+ Folder</button>
+      <button class="btn btn-danger btn-sm" id="bulkDelBtn" style="display:none" onclick="FM.bulkDelete()">Delete Selected</button>
+      <button class="btn btn-ghost btn-sm" onclick="FM.load()" style="margin-left:auto">↻</button>
+    </div>
+    <div class="breadcrumbs" id="breadcrumbs"></div>
+    <div id="filesContainer"></div>
+    <div style="text-align:center;margin-top:10px">
+      <button class="btn btn-ghost btn-sm" id="loadMoreBtn" style="display:none" onclick="FM.loadMore()">Load More…</button>
+    </div>
+  </div>
+
+  <!-- Shares Panel -->
+  <div class="panel" id="p-shares">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3>Share Links</h3>
+      <button class="btn btn-ghost btn-sm" onclick="SH.load()">↻</button>
+    </div>
+    <div id="sharesList"><div class="empty-state">Loading...</div></div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-area" id="toasts"></div>
+
+<!-- Dialogs -->
+<dialog id="dlgRename">
+  <h3>Rename File</h3>
+  <div class="field"><label>New Name</label><input type="text" id="renameVal"></div>
+  <input type="hidden" id="renameOld">
+  <div class="btns">
+    <button class="btn btn-ghost" onclick="dlgRename.close()">Cancel</button>
+    <button class="btn btn-primary" onclick="FM.doRename()">Rename</button>
+  </div>
+</dialog>
+
+<dialog id="dlgShare">
+  <h3>Create Share Link</h3>
+  <input type="hidden" id="shareFile">
+  <div class="field"><label>Passcode (optional)</label><input type="text" id="shareCode" placeholder="auto-generated"></div>
+  <div class="field"><label>Expires</label>
+    <select id="shareHours">
+      <option value="1">1 Hour</option><option value="24" selected>24 Hours</option>
+      <option value="168">7 Days</option><option value="720">30 Days</option><option value="999">Never</option>
+    </select>
+  </div>
+  <div id="shareResult" style="display:none" class="card" style="margin-top:12px">
+    <div class="field"><label>Public Link</label><input type="text" id="shareUrlOut" readonly></div>
+    <button class="btn btn-primary btn-sm" onclick="SH.copyResult()">Copy Link</button>
+  </div>
+  <div class="btns">
+    <button class="btn btn-ghost" onclick="dlgShare.close()">Close</button>
+    <button class="btn btn-primary" id="shareGenBtn" onclick="SH.generate()">Generate</button>
+  </div>
+</dialog>
+
+<dialog id="dlgMove">
+  <h3>Move File</h3>
+  <input type="hidden" id="moveFile">
+  <div class="field"><label>Destination folder</label><input type="text" id="moveDest" placeholder="e.g. /folder/ or /folder/newname.png"></div>
+  <div class="btns">
+    <button class="btn btn-ghost" onclick="dlgMove.close()">Cancel</button>
+    <button class="btn btn-primary" onclick="FM.doMove()">Move</button>
+  </div>
+</dialog>
+
+<dialog id="dlgCopy">
+  <h3>Copy File</h3>
+  <input type="hidden" id="copyFile">
+  <div class="field"><label>Destination folder</label><input type="text" id="copyDest" placeholder="e.g. /folder/ or /folder/newname.png"></div>
+  <div class="btns">
+    <button class="btn btn-ghost" onclick="dlgCopy.close()">Cancel</button>
+    <button class="btn btn-primary" onclick="FM.doCopy()">Copy</button>
+  </div>
+</dialog>
+
+<dialog id="dlgPreview">
+  <h3>Preview</h3>
+  <input type="hidden" id="previewFile">
+  <div id="previewContent" style="text-align:center;max-height:60vh;overflow:auto"></div>
+  <div class="btns">
+    <button class="btn btn-ghost" onclick="dlgPreview.close()">Close</button>
+    <button class="btn btn-primary" onclick="FM.download($('#previewFile').value)">Download</button>
+  </div>
+</dialog>
+
+<script>
+// ===========================================================================
+// CORE
+// ===========================================================================
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+function toast(msg, type='info') {
+  const d = document.createElement('div');
+  d.className = 'toast toast-' + type;
+  d.textContent = msg;
+  $('#toasts').appendChild(d);
+  setTimeout(() => d.remove(), 4000);
+}
+
+function fmtSize(b) {
+  if (!b || b === 0) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  const i = Math.floor(Math.log(b)/Math.log(1024));
+  return (b/Math.pow(1024,i)).toFixed(i?1:0)+' '+u[i];
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleString(undefined, { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+
+function fileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const map = {mp4:'🎬',mkv:'🎬',avi:'🎬',mov:'🎬',webm:'🎬',mp3:'🎵',flac:'🎵',wav:'🎵',ogg:'🎵',aac:'🎵',
+    jpg:'🖼️',jpeg:'🖼️',png:'🖼️',gif:'🖼️',webp:'🖼️',svg:'🖼️',bmp:'🖼️',
+    pdf:'📕',zip:'📦',rar:'📦',tar:'📦',gz:'📦','7z':'📦',
+    doc:'📄',docx:'📄',txt:'📄',md:'📄',csv:'📄',json:'📄',xml:'📄',
+    exe:'⚙️',dmg:'⚙️',iso:'💿',html:'🌐',css:'🎨',js:'📜'};
+  return map[ext] || '📄';
+}
+
+// ===========================================================================
+// API Layer
+// ===========================================================================
+const API = {
+  key: () => $('#apiKey').value,
+  async call(path, opts = {}) {
+    const h = opts.headers || {};
+    const k = this.key();
+    if (k) h['x-api-key'] = k;
+    if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof ReadableStream) && !(opts.body instanceof Blob) && !(opts.body instanceof FormData)) {
+      opts.body = JSON.stringify(opts.body);
+      if (!h['Content-Type']) h['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(path, { ...opts, headers: h });
+    const text = await res.text();
+    let json; try { json = JSON.parse(text); } catch { throw new Error(res.ok ? 'Bad response' : text.slice(0,200)); }
+    if (json.error) throw new Error(json.error);
+    return json;
+  }
+};
+
+// ===========================================================================
+// Tabs
+// ===========================================================================
+$('#tabsBar').addEventListener('click', e => {
+  const tab = e.target.closest('.tab');
+  if (!tab) return;
+  $$('.tab').forEach(t => t.classList.remove('active'));
+  $$('.panel').forEach(p => p.classList.remove('active'));
+  tab.classList.add('active');
+  $(`#p-${tab.dataset.tab}`).classList.add('active');
+  if (tab.dataset.tab === 'files') FM.load();
+  if (tab.dataset.tab === 'shares') SH.load();
+});
+
+// ===========================================================================
+// Auth key persistence
+// ===========================================================================
+$('#apiKey').value = localStorage.getItem('r2_key') || '';
+$('#apiKey').addEventListener('input', () => {
+  localStorage.setItem('r2_key', $('#apiKey').value);
+  updateAuthDot();
+});
+function updateAuthDot() { $('#authDot').classList.toggle('ok', !!$('#apiKey').value); }
+updateAuthDot();
+
+// ===========================================================================
+// DOWNLOAD MANAGER (DL)
+// ===========================================================================
+const DL = {
+  jobs: JSON.parse(localStorage.getItem('r2_jobs') || '[]'),
+
+  saveJobs() { localStorage.setItem('r2_jobs', JSON.stringify(this.jobs.map(j => ({...j, _workers:undefined})))); },
+
+  render() {
+    const c = $('#jobsList');
+    const active = this.jobs.filter(j => j.status !== 'removed');
+    if (!active.length) { c.innerHTML = '<div class="empty-state">No downloads yet</div>'; return; }
+    c.innerHTML = active.map((j,i) => {
+      const pct = j.totalParts ? Math.round((j.completedParts||0)/j.totalParts*100) : (j.status==='completed'?100:j.status==='failed'?100:0);
+      const barClass = j.status==='completed'?'done':j.status==='failed'||j.status==='aborted'?'fail':'';
+      const badge = j.status==='downloading'?'badge-running':j.status==='completed'?'badge-completed':j.status==='failed'||j.status==='aborted'?'badge-failed':'badge-queued';
+      return `<div class="job-item" data-idx="${i}">
+        <div class="job-header">
+          <div class="job-filename" title="${j.filename}">${j.filename}</div>
+          <span class="badge ${badge}">${j.mode==='single'?'stream':'parallel'} · ${j.status}</span>
+        </div>
+        <div class="progress"><div class="progress-bar ${barClass}" style="width:${pct}%"></div></div>
+        <div class="job-stats">
+          <span>📊 ${pct}%</span>
+          ${j.totalSize?`<span>📦 ${fmtSize(j.totalSize)}</span>`:''}
+          ${j.speed?`<span>⚡ ${j.speed}</span>`:''}
+          ${j.totalParts?`<span>🧩 ${j.completedParts||0}/${j.totalParts}</span>`:''}
+          ${j.eta?`<span>⏱ ETA ${j.eta}</span>`:''}
+          ${j.cpuTime?`<span>🖥 ${Math.round(j.cpuTime)}ms cpu</span>`:''}
+        </div>
+        <div style="margin-top:6px;display:flex;gap:6px">
+          ${j.status==='downloading'?`<button class="btn btn-danger btn-sm" onclick="DL.abort(${i})">Cancel</button>`:''}
+          ${j.status==='completed'||j.status==='failed'||j.status==='aborted'?`<button class="btn btn-ghost btn-sm" onclick="DL.remove(${i})">Dismiss</button>`:''}
+        </div>
+      </div>`;
+    }).join('');
+  },
+
+  setFromFM() {
+    $('#dlPrefix').value = FM.path;
+  },
+
+  async start() {
+    const url = $('#dlUrl').value.trim();
+    let name = $('#dlName').value.trim();
+    const prefix = $('#dlPrefix').value.trim();
+    const force = $('#dlForce').checked;
+    if (!url || !name) return toast('Fill in URL and filename', 'error');
+
+    if (prefix) {
+      const p = prefix.startsWith('/') ? prefix : '/' + prefix;
+      name = p.endsWith('/') ? p + name : p + '/' + name;
+    } else if (!name.startsWith('/')) {
+      name = '/' + name;
+    }
+
+    const btn = $('#dlStartBtn');
+    btn.disabled = true;
+
+    try {
+      const data = await API.call('/api/jobs/init', { method:'POST', body:{ sourceUrl:url, filename:name, force } });
+
+      if (data.status === 'exists') {
+        toast('File already exists ('+fmtSize(data.size)+')', 'info');
+        btn.disabled = false;
+        return;
+      }
+
+      const job = {
+        jobId: data.jobId, filename: name, sourceUrl: url, mode: data.mode,
+        totalSize: data.totalSize, status: 'downloading', startedAt: Date.now(),
+        completedParts: 0, totalParts: data.ranges?.length || 0, cpuTime: 0
+      };
+
+      this.jobs.unshift(job);
+      this.saveJobs();
+      this.render();
+
+      if (data.mode === 'single') {
+        this.pollSingle(job);
+      } else {
+        this.runParallel(job, data.ranges);
+      }
+
+      $('#dlUrl').value = '';
+      $('#dlPrefix').value = '';
+      $('#dlName').value = '';
+    } catch(e) {
+      toast('Init failed: '+e.message, 'error');
+    }
+    btn.disabled = false;
+  },
+
+  async pollSingle(job) {
+    const poll = setInterval(async () => {
+      try {
+        const s = await API.call('/api/jobs/status', { method:'POST', body:{ jobId:job.jobId }});
+        if (s.status === 'completed') {
+          clearInterval(poll);
+          job.status = 'completed';
+          this.saveJobs(); this.render();
+          toast(job.filename + ' downloaded!', 'success');
+        } else if (s.status === 'failed') {
+                console.log("failed for: ", s.error);
+
+          clearInterval(poll);
+          job.status = 'failed';
+          this.saveJobs(); this.render();
+          toast('Download failed: '+(s.error||''), 'error');
+        }
+      } catch {}
+    }, 3000);
+  },
+
+  async runParallel(job, ranges) {
+    let idx = 0;
+    const CONCURRENCY = 4;
+    const startTime = Date.now();
+
+    const next = async () => {
+      while (idx < ranges.length) {
+        if (job.status !== 'downloading') return;
+        const range = ranges[idx++];
+        let retries = 0;
+        while (retries < 3) { 
+          try {
+            const r = await API.call('/api/jobs/chunk', {
+              method:'POST',
+              body:{ jobId:job.jobId, partNumber:range.partNumber, start:range.start, end:range.end }
+            });
+            if (r.status === 'done') {
+              job.completedParts = (job.completedParts||0) + 1;
+              job.cpuTime = (job.cpuTime||0) + (r.cpuTime||0);
+              // Speed & ETA
+              const elapsed = (Date.now() - startTime) / 1000;
+              const bytes = job.completedParts * 20 * 1024 * 1024;
+              const speed = bytes / elapsed;
+              job.speed = fmtSize(speed)+'/s';
+              const remaining = job.totalSize - bytes;
+              if (speed > 0) { const secs = remaining/speed; job.eta = secs<60?Math.round(secs)+'s':Math.round(secs/60)+'m'; }
+              this.saveJobs(); this.render();
+              break;
+            } else if (r.status === 'failed') {
+              job.status = 'failed';
+              this.saveJobs(); this.render();
+              toast('Chunk failed: ' + (r.error || 'Unknown error'), 'error');
+              return;
+            }
+          } catch(e) { 
+          
+            if (retries >= 3) { job.status='failed'; this.saveJobs(); this.render(); toast('Chunk failed: '+e.message,'error'); return; }
+            await new Promise(r=>setTimeout(r,1000*retries));
+          } 
+        }
+      }
+    };
+
+    const workers = Array.from({length:CONCURRENCY}, ()=>next());
+    await Promise.all(workers);
+
+    if (job.status !== 'downloading') return;
+
+    // Finalize
+    try {
+      await API.call('/api/jobs/finish', { method:'POST', body:{ jobId:job.jobId }});
+      job.status = 'completed';
+      job.speed = ''; job.eta = '';
+      this.saveJobs(); this.render();
+      toast(job.filename+' downloaded!','success');
+    } catch(e) {
+      job.status = 'failed';
+      this.saveJobs(); this.render();
+      toast('Finalize failed: '+e.message,'error');
+    }
+  },
+
+  async abort(idx) {
+    const job = this.jobs[idx];
+    if (!job) return;
+    try { await API.call('/api/jobs/abort', { method:'POST', body:{ jobId:job.jobId }}); } catch {}
+    job.status = 'aborted';
+    this.saveJobs(); this.render();
+    toast('Download cancelled','info');
+  },
+
+  remove(idx) {
+    this.jobs.splice(idx,1);
+    this.saveJobs(); this.render();
+  }
+};
+DL.render();
+
+// ===========================================================================
+// UPLOAD MANAGER (UL)
+// ===========================================================================
+const UL = {
+  queue: [],
+  folderCreated: false,
+
+  setFromFM() {
+    $('#uploadPrefix').value = FM.path;
+  },
+
+  addFiles(files) {
+    this.folderCreated = false;
+    let prefix = $('#uploadPrefix').value.trim();
+    if (prefix && !prefix.startsWith('/')) prefix = '/' + prefix;
+    const customFilename = $('#uploadFilename').value.trim();
+    const useCustomName = customFilename && files.length === 1;
+    for (const f of files) {
+      let path;
+      if (useCustomName) {
+        path = prefix ? (prefix.endsWith('/')?prefix:prefix+'/') + customFilename : (customFilename.startsWith('/') ? customFilename : '/' + customFilename);
+      } else {
+        path = prefix ? (prefix.endsWith('/')?prefix:prefix+'/') + f.name : f.name;
+      }
+      if (!path.startsWith('/')) path = '/' + path;
+      this.queue.push({ file:f, path, progress:0, status:'pending', id:crypto.randomUUID() });
+    }
+    this.render();
+    this.processQueue();
+    $('#uploadFilename').value = '';
+  },
+
+  render() {
+    const c = $('#uploadQueue');
+    if (!this.queue.length) { c.innerHTML = ''; return; }
+    c.innerHTML = this.queue.map(u => {
+      const cls = u.status==='done'?'done':u.status==='error'?'fail':'';
+      return `<div class="upload-item">
+        <span class="uname" title="${u.path}">${u.status==='uploading'?'⏳':u.status==='done'?'✅':'📄'} ${u.path}</span>
+        <span style="font-size:12px;color:var(--c-muted)">${fmtSize(u.file.size)}</span>
+        <div class="progress"><div class="progress-bar ${cls}" style="width:${u.progress}%"></div></div>
+      </div>`;
+    }).join('');
+  },
+
+  async createFolder(prefix) {
+    if (!prefix) return;
+    const folderPath = prefix.startsWith('/') ? prefix : '/' + prefix;
+    try {
+      await API.call('/api/files/mkdir', { method:'POST', body:{ path: folderPath }});
+    } catch(e) {
+      console.log('Folder may already exist:', e.message);
+    }
+  },
+
+  async processQueue() {
+    const pending = this.queue.find(u=>u.status==='pending');
+    if (!pending) return;
+
+    const prefix = $('#uploadPrefix').value.trim();
+    const mkDir = $('#uploadMkdir').checked;
+
+    if (mkDir && prefix && !this.folderCreated) {
+      this.folderCreated = true;
+      await this.createFolder(prefix);
+    }
+
+    pending.status = 'uploading';
+    this.render();
+    try {
+      const h = { 'Content-Type': pending.file.type || 'application/octet-stream' };
+      const k = API.key();
+      if (k) h['x-api-key'] = k;
+      // Use XHR for progress
+      await new Promise((resolve,reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', '/api/upload?filename='+encodeURIComponent(pending.path));
+        Object.entries(h).forEach(([k,v])=>xhr.setRequestHeader(k,v));
+        xhr.upload.onprogress = e => { if(e.lengthComputable){ pending.progress=Math.round(e.loaded/e.total*100); this.render(); }};
+        xhr.onload = () => { if(xhr.status>=200&&xhr.status<300) resolve(); else reject(new Error(xhr.statusText)); };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(pending.file);
+      });
+      pending.status = 'done'; pending.progress = 100;
+      toast(pending.path+' uploaded','success');
+    } catch(e) {
+      pending.status = 'error';
+      toast('Upload failed: '+e.message,'error');
+    }
+    this.render();
+    this.processQueue();
+  }
+};
+
+// Dropzone events
+const dz = $('#dropzone');
+dz.addEventListener('click', () => $('#fileInput').click());
+$('#fileInput').addEventListener('change', e => { if(e.target.files.length) UL.addFiles(e.target.files); e.target.value=''; });
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); if(e.dataTransfer.files.length) UL.addFiles(e.dataTransfer.files); });
+
+// ===========================================================================
+// FILE MANAGER (FM)
+// ===========================================================================
+const FM = {
+  path: '',
+  files: [],
+  folders: [],
+  cursor: null,
+  selected: new Set(),
+  view: localStorage.getItem('r2_view')||'list',
+
+  async load() {
+    this.selected.clear();
+    this.cursor = null;
+    this.files = [];
+    this.folders = [];
+    this.renderBreadcrumbs();
+    $('#filesContainer').innerHTML = '<div class="empty-state">Loading…</div>';
+    $('#bulkDelBtn').style.display = 'none';
+    try {
+      const search = $('#fileSearch').value.trim();
+      const prefix = this.path ? (this.path.startsWith('/') ? this.path : '/' + this.path) : '/';
+      const params = new URLSearchParams();
+      params.set('prefix', prefix);
+      params.set('delimiter', '/');
+      params.set('limit', '200');
+      if (search) params.set('search', search);
+      const data = await API.call('/api/files?'+params);
+      this.files = data.files || [];
+      this.folders = data.folders || [];
+      this.cursor = data.cursor;
+      this.sort();
+      this.render();
+      $('#loadMoreBtn').style.display = data.truncated ? '' : 'none';
+    } catch(e) {
+      $('#filesContainer').innerHTML = '<div class="empty-state">Error: '+e.message+'</div>';
+    }
+  },
+
+  async loadMore() {
+    if (!this.cursor) return;
+    try {
+      const search = $('#fileSearch').value.trim();
+      const params = new URLSearchParams({ prefix:this.path, delimiter:'/', limit:'200', cursor:this.cursor });
+      if (search) params.set('search', search);
+      const data = await API.call('/api/files?'+params);
+      this.files.push(...(data.files||[]));
+      this.folders.push(...(data.folders||[]));
+      this.cursor = data.cursor;
+      this.sort();
+      this.render();
+      $('#loadMoreBtn').style.display = data.truncated ? '' : 'none';
+    } catch(e) { toast(e.message,'error'); }
+  },
+
+  sort() {
+    const [field,dir] = ($('#fileSort').value||'name-asc').split('-');
+    const m = dir==='desc'?-1:1;
+    this.files.sort((a,b) => {
+      if (field==='name') return a.key.localeCompare(b.key)*m;
+      if (field==='size') return (a.size-b.size)*m;
+      if (field==='date') return (new Date(a.uploaded)-new Date(b.uploaded))*m;
+      return 0;
+    });
+  },
+
+  render() {
+    if (this.view === 'grid') this.renderGrid();
+    else this.renderList();
+    $('#viewToggle').textContent = this.view==='grid'?'☰ List':'▦ Grid';
+  },
+
+  renderBreadcrumbs() {
+    const parts = this.path.split('/').filter(Boolean);
+    let html = `<a onclick="FM.navigate('')">🏠 Root</a>`;
+    let acc = '';
+    parts.forEach((p,i) => {
+      acc += p + '/';
+      html += ` / <a onclick="FM.navigate('${acc}')">${p}</a>`;
+    });
+    $('#breadcrumbs').innerHTML = html;
+  },
+
+  renderList() {
+    if (!this.folders.length && !this.files.length) {
+      $('#filesContainer').innerHTML = '<div class="empty-state">Empty folder</div>';
+      return;
+    }
+    const prefix = this.path;
+    let rows = '';
+    // Folders
+    this.folders.forEach(f => {
+      const name = f.replace(prefix,'').replace(/\/$/,'');
+      rows += `<tr class="folder-row" ondblclick="FM.navigate('${f}')">
+        <td><input type="checkbox" disabled></td>
+        <td class="fname">📁 ${name}</td><td>—</td><td>—</td>
+        <td class="actions"><button class="act" onclick="FM.navigate('${f}')" title="Open">📂</button>
+        <button class="act" onclick="FM.deleteFolder('${f}')" title="Delete" style="color:var(--c-danger)">✕</button></td></tr>`;
+    });
+    // Files
+    this.files.forEach(f => {
+      const name = f.key.replace(prefix,'');
+      const sel = this.selected.has(f.key);
+      rows += `<tr>
+        <td><input type="checkbox" ${sel?'checked':''} onchange="FM.toggleSelect('${f.key}',this.checked)"></td>
+        <td class="fname" title="${f.key}">${fileIcon(name)} ${name}</td>
+        <td>${fmtSize(f.size)}</td>
+        <td>${fmtDate(f.uploaded)}</td>
+        <td class="actions">
+          <button class="act" onclick="FM.preview('${f.key}')" title="Preview">👁️</button>
+          <button class="act" onclick="FM.download('${f.key}')" title="Download">⬇️</button>
+          <button class="act" onclick="FM.openRename('${f.key}')" title="Rename">✏️</button>
+          <button class="act" onclick="FM.openMove('${f.key}')" title="Move">📦</button>
+          <button class="act" onclick="FM.openCopy('${f.key}')" title="Copy">📋</button>
+          <button class="act" onclick="FM.openShare('${f.key}')" title="Share">🔗</button>
+          <button class="act" onclick="FM.deleteFile('${f.key}')" title="Delete" style="color:var(--c-danger)">✕</button>
+        </td></tr>`;
+    });
+    $('#filesContainer').innerHTML = `<table class="file-table">
+      <thead><tr><th style="width:30px"><input type="checkbox" onchange="FM.selectAll(this.checked)"></th>
+      <th>Name</th><th style="width:90px">Size</th><th style="width:140px">Modified</th><th style="width:160px">Actions</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  },
+
+  renderGrid() {
+    if (!this.folders.length && !this.files.length) {
+      $('#filesContainer').innerHTML = '<div class="empty-state">Empty folder</div>';
+      return;
+    }
+    const prefix = this.path;
+    let cards = '';
+    this.folders.forEach(f => {
+      const name = f.replace(prefix,'').replace(/\/$/,'');
+      cards += `<div class="file-card" ondblclick="FM.navigate('${f}')">
+        <div class="icon">📁</div><div class="name">${name}</div></div>`;
+    });
+    this.files.forEach(f => {
+      const name = f.key.replace(prefix,'');
+      const sel = this.selected.has(f.key);
+      cards += `<div class="file-card" ondblclick="FM.download('${f.key}')">
+        <input type="checkbox" ${sel?'checked':''} onchange="event.stopPropagation();FM.toggleSelect('${f.key}',this.checked)">
+        <div class="icon">${fileIcon(name)}</div>
+        <div class="name" title="${f.key}">${name}</div>
+        <div class="size">${fmtSize(f.size)}</div></div>`;
+    });
+    $('#filesContainer').innerHTML = `<div class="file-grid">${cards}</div>`;
+  },
+
+  navigate(prefix) { this.path = prefix; this.load(); },
+  toggleView() { this.view = this.view==='list'?'grid':'list'; localStorage.setItem('r2_view',this.view); this.render(); },
+  toggleSelect(key, checked) {
+    if(checked) this.selected.add(key); else this.selected.delete(key);
+    $('#bulkDelBtn').style.display = this.selected.size?'':'none';
+  },
+  selectAll(checked) {
+    this.files.forEach(f => { if(checked) this.selected.add(f.key); else this.selected.delete(f.key); });
+    $('#bulkDelBtn').style.display = this.selected.size?'':'none';
+    this.render();
+  },
+
+  download(key) {
+    const k = API.key();
+    const url = '/get/'+encodeURIComponent(key)+(k?'?key='+encodeURIComponent(k):'');
+    window.open(url,'_blank');
+  },
+
+  copyLink(key) {
+    const k = API.key();
+    const url = location.origin+'/get/'+encodeURIComponent(key)+(k?'?key='+encodeURIComponent(k):'');
+    navigator.clipboard.writeText(url).then(()=>toast('Link copied','success'));
+  },
+
+  openRename(key) {
+    const name = key.split('/').pop();
+    $('#renameOld').value = key;
+    $('#renameVal').value = name;
+    dlgRename.showModal();
+    setTimeout(()=>$('#renameVal').select(),50);
+  },
+
+  async doRename() {
+    const oldName = $('#renameOld').value;
+    const newVal = $('#renameVal').value.trim();
+    if(!newVal) return;
+    // Preserve path prefix
+    const prefix = oldName.substring(0, oldName.lastIndexOf('/')+1);
+    const newName = prefix + newVal;
+    if(newName === oldName) { dlgRename.close(); return; }
+    try {
+      await API.call('/api/files/rename', { method:'POST', body:{ oldName, newName }});
+      dlgRename.close();
+      toast('Renamed','success');
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
+  },
+
+  openShare(key) {
+    $('#shareFile').value = key;
+    $('#shareCode').value = '';
+    $('#shareResult').style.display = 'none';
+    $('#shareGenBtn').style.display = '';
+    dlgShare.showModal();
+  },
+
+  openMove(key) {
+    $('#moveFile').value = key;
+    $('#moveDest').value = this.path || '/';
+    dlgMove.showModal();
+    setTimeout(() => $('#moveDest').focus(), 50);
+  },
+
+  async doMove() {
+    const source = $('#moveFile').value;
+    let dest = $('#moveDest').value.trim();
+    if (!dest) return;
+    if (!dest.startsWith('/')) dest = '/' + dest;
+    if (!dest.endsWith('/')) {
+      const name = source.split('/').pop();
+      const destFolder = dest.substring(0, dest.lastIndexOf('/') + 1);
+      if (!dest.includes('.') || destFolder === '/') {
+        dest = destFolder + name;
+      }
+    } else {
+      dest = dest + source.split('/').pop();
+    }
+    if (dest === source) { dlgMove.close(); return; }
+    try {
+      await API.call('/api/files/move', { method:'POST', body:{ source, destination: dest }});
+      dlgMove.close();
+      toast('Moved to ' + dest, 'success');
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
+  },
+
+  openCopy(key) {
+    $('#copyFile').value = key;
+    $('#copyDest').value = this.path || '/';
+    dlgCopy.showModal();
+    setTimeout(() => $('#copyDest').focus(), 50);
+  },
+
+  async doCopy() {
+    const source = $('#copyFile').value;
+    let dest = $('#copyDest').value.trim();
+    if (!dest) return;
+    if (!dest.startsWith('/')) dest = '/' + dest;
+    if (!dest.endsWith('/')) {
+      const name = source.split('/').pop();
+      const destFolder = dest.substring(0, dest.lastIndexOf('/') + 1);
+      if (!dest.includes('.') || destFolder === '/') {
+        dest = destFolder + name;
+      }
+    } else {
+      dest = dest + source.split('/').pop();
+    }
+    if (dest === source) { dlgCopy.close(); return; }
+    try {
+      await API.call('/api/files/copy', { method:'POST', body:{ source, destination: dest }});
+      dlgCopy.close();
+      toast('Copied to ' + dest, 'success');
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
+  },
+
+  async preview(key) {
+    $('#previewFile').value = key;
+    const ext = key.split('.').pop().toLowerCase();
+    const imgExts = ['jpg','jpeg','png','gif','webp','svg','bmp'];
+    const textExts = ['txt','md','json','xml','html','css','js','log','csv'];
+    
+    const c = $('#previewContent');
+    
+    if (imgExts.includes(ext)) {
+      const k = API.key();
+      const url = '/get/' + encodeURIComponent(key) + (k ? '?key=' + encodeURIComponent(k) : '');
+      c.innerHTML = `<img src="${url}" style="max-width:100%;max-height:50vh">`;
+    } else if (textExts.includes(ext)) {
+      c.innerHTML = '<div style="text-align:left;padding:10px;background:#f5f5f5;white-space:pre-wrap;font-size:12px">Loading...</div>';
+      try {
+        const k = API.key();
+        const url = '/get/' + encodeURIComponent(key) + (k ? '?key=' + encodeURIComponent(k) : '');
+        const res = await fetch(url);
+        const text = await res.text();
+        c.innerHTML = `<div style="text-align:left;padding:10px;background:#f5f5f5;white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto">${text.slice(0,50000)}</div>`;
+      } catch(e) {
+        c.innerHTML = '<div style="color:red">Failed to load</div>';
+      }
+    } else {
+      const size = this.files.find(f => f.key === key)?.size || 0;
+      c.innerHTML = `<div style="padding:20px">
+        <div style="font-size:48px;text-align:center">${fileIcon(key)}</div>
+        <div style="margin-top:10px;font-weight:600">${key.split('/').pop()}</div>
+        <div style="color:#666">${fmtSize(size)}</div>
+        <div style="color:#999;font-size:12px;margin-top:5px">Preview not available for this file type</div>
+      </div>`;
+    }
+    
+    dlgPreview.showModal();
+  },
+
+  async deleteFile(key) {
+    if(!confirm('Delete "'+key.split('/').pop()+'"?')) return;
+    try {
+      await API.call('/api/files/delete', { method:'POST', body:{ keys:[key] }});
+      toast('Deleted','success');
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
+  },
+
+  async deleteFolder(prefix) {
+    if(!confirm('Delete folder and its contents?')) return;
+    try {
+      // List all files in folder
+      const data = await API.call('/api/files?'+new URLSearchParams({ prefix, limit:'999' }));
+      const keys = (data.files||[]).map(f=>f.key);
+      // Also delete the .emptydir marker
+      keys.push(prefix+'.emptydir');
+      if(keys.length) await API.call('/api/files/delete', { method:'POST', body:{ keys }});
+      toast('Folder deleted','success');
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
+  },
+
+  async bulkDelete() {
+    const keys = Array.from(this.selected);
+    if(!keys.length) return;
+    if(!confirm('Delete '+keys.length+' file(s)?')) return;
+    try {
+      await API.call('/api/files/delete', { method:'POST', body:{ keys }});
+      toast(keys.length+' deleted','success');
+      this.selected.clear();
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
+  },
+
+  promptMkdir() {
+    const name = prompt('Folder name:');
+    if(!name) return;
+    const path = this.path + name.replace(/[\/\\]/g,'');
+    API.call('/api/files/mkdir', { method:'POST', body:{ path }})
+      .then(()=>{ toast('Folder created','success'); this.load(); })
+      .catch(e=>toast(e.message,'error'));
+  }
+};
+
+// Search & sort events
+let searchTimer;
+$('#fileSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(()=>FM.load(), 300); });
+$('#fileSort').addEventListener('change', () => { FM.sort(); FM.render(); });
+
+// ===========================================================================
+// SHARE MANAGER (SH)
+// ===========================================================================
+const SH = {
+  async load() {
+    $('#sharesList').innerHTML = '<div class="empty-state">Loading…</div>';
+    try {
+      const data = await API.call('/api/shares');
+      const shares = data.shares || [];
+      if (!shares.length) { $('#sharesList').innerHTML = '<div class="empty-state">No share links</div>'; return; }
+      $('#sharesList').innerHTML = shares.map(s => {
+        const exp = s.expires ? (s.expired ? '🔴 Expired' : '🟢 '+fmtDate(s.expires)) : '🟢 Never';
+        const fullUrl = location.origin + s.url;
+        return `<div class="share-item">
+          <div class="sf" title="${s.filename}">${s.filename}</div>
+          <span style="font-size:12px;color:var(--c-muted)">Code: <strong>${s.code}</strong></span>
+          <span style="font-size:12px">${exp}</span>
+          <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${fullUrl}');toast('Copied','success')">Copy</button>
+          <button class="btn btn-danger btn-sm" onclick="SH.revoke('${s.token}')">Revoke</button>
+        </div>`;
+      }).join('');
+    } catch(e) {
+      $('#sharesList').innerHTML = '<div class="empty-state">Error: '+e.message+'</div>';
+    }
+  },
+
+  async generate() {
+    const filename = $('#shareFile').value;
+    const hours = parseInt($('#shareHours').value);
+    const customCode = $('#shareCode').value.trim();
+    const btn = $('#shareGenBtn');
+    btn.disabled = true; btn.textContent = 'Generating…';
+    try {
+      const data = await API.call('/api/shares/create', { method:'POST', body:{ filename, hours, customCode }});
+      $('#shareUrlOut').value = location.origin + data.url;
+      $('#shareResult').style.display = 'block';
+      btn.style.display = 'none';
+      toast('Share link created','success');
+    } catch(e) { toast(e.message,'error'); }
+    btn.disabled = false; btn.textContent = 'Generate';
+  },
+
+  copyResult() {
+    const v = $('#shareUrlOut').value;
+    navigator.clipboard.writeText(v).then(()=>toast('Copied!','success'));
+  },
+
+  async revoke(token) {
+    if(!confirm('Revoke this share link?')) return;
+    try {
+      await API.call('/api/shares/revoke', { method:'POST', body:{ token }});
+      toast('Revoked','success');
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
+  }
+};
+
+// ===========================================================================
+// Dialog refs
+// ===========================================================================
+const dlgRename = $('#dlgRename');
+const dlgShare = $('#dlgShare');
+const dlgMove = $('#dlgMove');
+const dlgCopy = $('#dlgCopy');
+const dlgPreview = $('#dlgPreview');
+// Close on backdrop click
+[dlgRename, dlgShare, dlgMove, dlgCopy, dlgPreview].forEach(d => d.addEventListener('click', e => { if(e.target===d) d.close(); }));
+
+// Auto-fill filename from URL
+$('#dlUrl').addEventListener('input', () => {
+  const v = $('#dlUrl').value.trim();
+  if (!$('#dlName').value && v) {
+    try { const u = new URL(v); const n = u.pathname.split('/').pop(); if(n && n.includes('.')) $('#dlName').value = decodeURIComponent(n); } catch{}
+  }
+});
+
+// Load files on first visit to tab
+// (handled by tab click handler)
+</script>
+</body>
+</html>

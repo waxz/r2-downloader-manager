@@ -22,3 +22,7 @@ new_sqlite_classes = ["DownloadManager"]
 # Optional: Environment variables
 [vars]
 # Add any environment variables here
+
+[assets]
+directory = "./src"   # Folder containing your static files
+binding = "ASSETS"     # This enables env.ASSETS.fetch()
