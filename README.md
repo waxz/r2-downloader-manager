@@ -108,41 +108,6 @@ Visit your worker URL in a browser:
 *   **Direct Upload:** Select a file from your computer to stream to R2.
 *   **Library:** View, download, or delete files currently in your bucket.
 
-### API Reference
-
-All requests must include `x-api-key: YOUR_KEY` header or `?key=YOUR_KEY` query param.
-
-#### 1. Start Download
-**POST** `/download`
-
-```json
-{
-  "sourceUrl": "https://example.com/video.mp4",
-  "filename": "my-video.mp4",
-  "force": false 
-}
-```
-*   `force`: (Optional) Set to `true` to overwrite if file exists.
-
-#### 2. Check Status
-**GET** `/status/:jobId`
-Returns progress percentage, bytes downloaded, and status (`downloading`, `completed`, `failed`).
-
-#### 3. Get Download Link
-**GET** `/get/:filename`
-Returns a stream of the file from R2 with `Content-Disposition: attachment`.
-
-#### 4. Direct Upload
-**PUT** `/upload?filename=image.png`
-Body: Raw binary data.
-
-#### 5. List Files
-**GET** `/list`
-Returns JSON array of files in the bucket.
-
-#### 6. Delete File
-**DELETE** `/delete?filename=image.png`
-
 ## 🧠 How it Works
 
 1.  **The Pipeline:**
@@ -156,6 +121,141 @@ Returns JSON array of files in the bucket.
 
 MIT License. Feel free to modify and use for your own projects.
 
-## Example File
-- File with konwn length: https://examplefiles.org/example-video-files/sample-mp4-files
-- File without known length: https://file-examples.com/storage/fe25d4377569b8210926686/2017/04/file_example_MP4_1920_18MG.mp4
+## 📚 API Reference
+
+### Authentication
+All requests require `x-api-key` header or `?key=` query parameter.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/jobs/init` | Start remote download |
+| POST | `/api/jobs/chunk` | Download chunk (internal) |
+| POST | `/api/jobs/status` | Check download status |
+| POST | `/api/jobs/finish` | Complete multipart download |
+| POST | `/api/jobs/abort` | Cancel download |
+| GET | `/api/files` | List files |
+| GET | `/api/files/info?key=...` | Get file info |
+| POST | `/api/files/delete` | Delete files |
+| POST | `/api/files/rename` | Rename file |
+| POST | `/api/files/move` | Move file |
+| POST | `/api/files/copy` | Copy file |
+| POST | `/api/files/mkdir` | Create folder |
+| PUT | `/api/upload?filename=...` | Upload file |
+| GET | `/get/:filename` | Download file |
+| POST | `/api/shares/create` | Create share link |
+| GET | `/api/shares` | List shares |
+| POST | `/api/shares/revoke` | Revoke share |
+
+## 💻 Command Line Examples
+
+### Upload File (Correct Usage)
+```bash
+# Upload with explicit Content-Type
+curl -X PUT "https://your-domain.com/api/upload?filename=folder/image.png" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: image/png" \
+  --data-binary @image.png
+
+# Upload (auto-detect content type)
+curl -X PUT "https://your-domain.com/api/upload?filename=folder/file.zip" \
+  -H "x-api-key: YOUR_API_KEY" \
+  --data-binary @file.zip
+
+# Upload to root
+curl -X PUT "https://your-domain.com/api/upload?filename=myfile.mp4" \
+  -H "x-api-key: YOUR_API_KEY" \
+  --data-binary @myfile.mp4
+```
+
+### Start Remote Download
+```bash
+curl -X POST "https://your-domain.com/api/jobs/init" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"sourceUrl":"https://example.com/video.mp4","filename":"/downloads/video.mp4"}'
+```
+
+### List Files
+```bash
+curl "https://your-domain.com/api/files" -H "x-api-key: YOUR_API_KEY"
+```
+
+### Delete Files
+```bash
+curl -X POST "https://your-domain.com/api/files/delete" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"keys":["/folder/file.png"]}'
+```
+
+### Create Share Link
+```bash
+curl -X POST "https://your-domain.com/api/shares/create" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"filename":"/video.mp4","hours":24}'
+```
+
+## ⚠️ Common Errors & Troubleshooting
+
+### 1. File Upload Corrupted / Wrong Size
+**Symptom:** Uploaded file size doesn't match original.
+
+**Cause:** Using `-d` instead of `--data-binary` in curl.
+
+**Solution:**
+```bash
+# Wrong - treats @ as literal string
+curl -X PUT "url" -d @file.zip
+
+# Correct - reads file as binary
+curl -X PUT "url" --data-binary @file.zip
+```
+
+### 2. Double Slash in URL
+**Symptom:** `https://domain.com//folder/file.mp4`
+
+**Cause:** Filename started with `/` in both query param and path.
+
+**Solution:** The API now handles this automatically. If using share links, make sure the filename doesn't have leading slashes.
+
+### 3. Unknown Content-Length Error
+**Symptom:** `Cannot download: source does not support Range requests and Content-Length is unknown`
+
+**Cause:** Remote server doesn't provide file size (live streams, chunked encoding).
+
+**Solution:** Use a source with known file size, or download directly to R2 using a different method.
+
+### 4. File Not Found
+**Symptom:** `Not found` when trying to get/download file.
+
+**Causes:**
+- File was uploaded to wrong path (check leading `/`)
+- File was deleted
+- API key mismatch
+
+**Solution:** Check file list with `/api/files` endpoint to verify actual file paths.
+
+### 5. CORS Errors in Browser
+**Symptom:** Console shows CORS errors when using dashboard.
+
+**Solution:** Ensure you're accessing the correct worker URL and API key is set in the dashboard.
+
+### 6. Durable Object Errors
+**Symptom:** Download fails or hangs.
+
+**Solution:** 
+- Check wrangler.workers.toml has correct Durable Object bindings
+- Ensure migrations are applied: `npx wrangler deploy --force`
+- Check Durable Objects are properly configured in wrangler.toml
+
+## 🔧 Path Conventions
+
+- All file paths should start with `/` (e.g., `/folder/file.png`)
+- Folder paths should end with `/` (e.g., `/photos/`)
+- The API normalizes paths automatically, but for consistency:
+  - Upload: `/folder/filename.ext`
+  - Folder: `/folder/`
+  - Root: `/filename.ext`

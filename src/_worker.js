@@ -107,11 +107,18 @@ export default {
         let filename = url.searchParams.get('filename');
         if (!filename) return jsonError('Missing filename');
         if (!filename.startsWith('/')) filename = '/' + filename;
-        await env.DRIVE_BUCKET.put(filename, request.body, {
-          httpMetadata: { contentType: request.headers.get('content-type') || 'application/octet-stream' },
+        
+        const contentType = request.headers.get('Content-Type') || 'application/octet-stream';
+        
+        const arrayBuffer = await request.arrayBuffer();
+        const body = new Uint8Array(arrayBuffer);
+        
+        await env.DRIVE_BUCKET.put(filename, body, {
+          httpMetadata: { contentType, contentLength: body.length },
           customMetadata: { source: 'upload', timestamp: Date.now().toString() }
         });
-        return jsonOk({ status: 'uploaded', filename });
+        
+        return jsonOk({ status: 'uploaded', filename, size: body.length });
       }
 
       if (path.startsWith('/get/')) {

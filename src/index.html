@@ -840,16 +840,20 @@ const FM = {
     this.render();
   },
 
-  download(key) {
+  getUrl(key) {
     const k = API.key();
-    const url = '/get/'+encodeURIComponent(key)+(k?'?key='+encodeURIComponent(k):'');
-    window.open(url,'_blank');
+    const cleanKey = key.startsWith('/') ? key.slice(1) : key;
+    return '/get/' + encodeURIComponent(cleanKey) + (k ? '?key=' + encodeURIComponent(k) : '');
+  },
+
+  download(key) {
+    const url = this.getUrl(key);
+    window.open(url, '_blank');
   },
 
   copyLink(key) {
-    const k = API.key();
-    const url = location.origin+'/get/'+encodeURIComponent(key)+(k?'?key='+encodeURIComponent(k):'');
-    navigator.clipboard.writeText(url).then(()=>toast('Link copied','success'));
+    const url = location.origin + this.getUrl(key);
+    navigator.clipboard.writeText(url).then(() => toast('Link copied', 'success'));
   },
 
   openRename(key) {
@@ -953,14 +957,12 @@ const FM = {
     const c = $('#previewContent');
     
     if (imgExts.includes(ext)) {
-      const k = API.key();
-      const url = '/get/' + encodeURIComponent(key) + (k ? '?key=' + encodeURIComponent(k) : '');
+      const url = this.getUrl(key);
       c.innerHTML = `<img src="${url}" style="max-width:100%;max-height:50vh">`;
     } else if (textExts.includes(ext)) {
       c.innerHTML = '<div style="text-align:left;padding:10px;background:#f5f5f5;white-space:pre-wrap;font-size:12px">Loading...</div>';
       try {
-        const k = API.key();
-        const url = '/get/' + encodeURIComponent(key) + (k ? '?key=' + encodeURIComponent(k) : '');
+        const url = this.getUrl(key);
         const res = await fetch(url);
         const text = await res.text();
         c.innerHTML = `<div style="text-align:left;padding:10px;background:#f5f5f5;white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto">${text.slice(0,50000)}</div>`;
