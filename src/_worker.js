@@ -122,7 +122,9 @@ export default {
       }
 
       if (path.startsWith('/get/')) {
-        const filename = decodeURIComponent(path.slice(5));
+        let filename = path.slice(5);
+        try { filename = decodeURIComponent(filename); } catch {}
+        if (!filename.startsWith('/')) filename = '/' + filename;
         const obj = await env.DRIVE_BUCKET.get(filename);
         if (!obj) return new Response('Not found', { status: 404 });
         const headers = new Headers();
