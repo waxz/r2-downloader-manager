@@ -31,7 +31,7 @@ compatibility_date = "2026-01-01"
 
 # R2 bucket binding
 [[r2_buckets]]
-binding = "DRIVE_BUCKET"
+binding = "WEBDAV_STORAGE"
 bucket_name = "my-drive-bucket"
 preview_bucket_name = "my-drive-bucket-preview"  # Optional: separate bucket for dev
 
@@ -259,3 +259,15 @@ curl -X PUT "url" --data-binary @file.zip
   - Upload: `/folder/filename.ext`
   - Folder: `/folder/`
   - Root: `/filename.ext`
+
+
+# Webdav
+
+https://github.com/xu-2hua/CloudFlare-WebDav.git
+
+
+# localflare
+https://github.com/rohanprasadofficial/localflare
+```bash
+npx localflare
+```

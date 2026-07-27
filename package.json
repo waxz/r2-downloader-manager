@@ -1,0 +1,24 @@
+{
+	"name": "r2-webdav",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev-page": "wrangler pages dev",
+		"dev-worker": "wrangler dev -c ./wrangler.workers.toml",
+		"start": "wrangler dev",
+		"test:python": "python3 -m unittest -q tests.test_webdav_and_download",
+		"format": "prettier . --write",
+		"format:check": "prettier . --check"
+	},
+	"devDependencies": {
+		"@cloudflare/workers-types": "*",
+		"prettier": "^3.1.1",
+		"typescript": "^5.0.4",
+		"wrangler": "^4.15.2"
+	},
+	"type": "module",
+	"dependencies": {
+		"@xmldom/xmldom": "^0.8.11"
+	}
+}

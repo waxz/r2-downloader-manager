@@ -6,7 +6,7 @@ pages_build_output_dir="src"
 
 # R2 bucket binding
 [[r2_buckets]]
-binding = "DRIVE_BUCKET"
+binding = "WEBDAV_STORAGE"
 bucket_name = "my-drive-bucket"
 preview_bucket_name = "my-drive-bucket-preview"  # Optional: separate bucket for dev
 
