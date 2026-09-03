@@ -99,6 +99,21 @@ function ensureR2CompatibleStorage(env) {
   return env;
 }
 
+// _worker.js drives the /api/* routes on the same WEBDAV_STORAGE bucket and
+// needs these same path/key helpers to stay consistent with the WebDAV
+// routes below (e.g. a file uploaded via /api/upload must be reachable via
+// GET /<name> and vice versa). Export them instead of duplicating the logic.
+export { ensureR2CompatibleStorage, getParentPath };
+export function normalizeStoragePath(path) {
+  return normalizePath(path);
+}
+export function normalizeStorageKey(path) {
+  return normalizePath(path);
+}
+export function joinStoragePath(base, path) {
+  return joinPath(base, path);
+}
+
 // 请求速率限制实现
 async function applyRateLimit(request, env) {
   try {
@@ -1153,7 +1168,10 @@ async function handlePropfind(request, env, path) {
     xmlBody += '</D:multistatus>';
     
     // 确保响应头正确设置，特别关注安卓兼容性
+    // PROPFIND 必须返回 207 Multi-Status（RFC 4918），否则严格的 WebDAV 客户端
+    // （Windows 资源管理器、macOS Finder、rclone 等）会将默认的 200 视为失败
     return new Response(xmlBody, {
+      status: 207,
       headers: {
         'Content-Type': 'application/xml; charset=utf-8',
         'DAV': '1, 2, 3',
@@ -1227,16 +1245,20 @@ function createResourceResponse(path, isDirectory, lastModified, resourceInfo = 
   
   // 获取显示名称
   const displayName = path.split('/').pop() || '/';
-  
+
+  // href 和 displayname 来自用户提供的文件/目录名，写入 XML 前必须转义
+  const escapedHref = escapeHtml(hrefPath);
+  const escapedDisplayName = escapeHtml(displayName);
+
   // 为手机文件管理器和其他客户端提供全面的PROPFIND响应
   return `
     <D:response>
-      <D:href>${hrefPath}</D:href>
+      <D:href>${escapedHref}</D:href>
       <D:propstat>
         <D:prop>
           ${resourceType}
           <D:getlastmodified>${formattedDate}</D:getlastmodified>
-          <D:displayname>${displayName}</D:displayname>
+          <D:displayname>${escapedDisplayName}</D:displayname>
           ${size !== undefined ? `<D:getcontentlength>${size}</D:getcontentlength>` : '<D:getcontentlength>0</D:getcontentlength>'}
           <D:creationdate>${resourceInfo.createdAt ? new Date(resourceInfo.createdAt).toUTCString() : formattedDate}</D:creationdate>
           <D:getetag>${etag}</D:getetag>
@@ -1809,7 +1831,7 @@ async function generateDirectoryListing(env, path, resourceInfo) {
   </style>
 </head>
 <body>
-  <h1>目录: ${path}</h1>
+  <h1>目录: ${escapeHtml(path)}</h1>
   
   <!-- 操作按钮区域 -->
   <div class="actions">
@@ -1878,7 +1900,7 @@ async function generateDirectoryListing(env, path, resourceInfo) {
     if (path !== '/') {
       const parentPath = getParentPath(path);
       // 使用简单直接的方式构建父目录链接，确保不会出现双斜杠
-      const parentLink = `${parentPath}`.replace(/\/\//g, '/');
+      const parentLink = escapeHtml(`${parentPath}`.replace(/\/\//g, '/'));
       html += `
       <tr>
         <td><a href="${parentLink}" class="dir">..</a></td>
@@ -1903,14 +1925,18 @@ async function generateDirectoryListing(env, path, resourceInfo) {
       const linkClass = child.type === 'directory' ? 'dir' : 'file';
       // 确保根目录下的子目录不会显示额外的斜杠
       const displayName = child.type === 'directory' ? `${child.name}/` : child.name;
-      
+      // 文件/目录名由用户提供，写入 HTML 前必须转义，避免存储型 XSS
+      const escapedLink = escapeHtml(fullLink);
+      const escapedName = escapeHtml(child.name);
+      const escapedDisplayName = escapeHtml(displayName);
+
       html += `
       <tr>
-        <td><a href="${fullLink}" class="${linkClass}">${displayName}</a></td>
+        <td><a href="${escapedLink}" class="${linkClass}">${escapedDisplayName}</a></td>
         <td>${child.type === 'directory' ? '目录' : '文件'}</td>
         <td class="size">${child.type === 'directory' ? '-' : (child.size ? formatFileSize(child.size) : '未知')}</td>
         <td>${new Date(child.modifiedAt).toLocaleString()}</td>
-        <td><button class="rename-btn" data-path="${fullLink}" data-name="${child.name}" data-type="${child.type}">重命名</button> ${child.type === 'directory' ? '' : '<a href="' + fullLink + '" class="download-btn" download>下载</a>'} <button class="delete-btn" data-path="${fullLink}" data-name="${child.name}" data-type="${child.type}">删除</button></td>
+        <td><button class="rename-btn" data-path="${escapedLink}" data-name="${escapedName}" data-type="${child.type}">重命名</button> ${child.type === 'directory' ? '' : '<a href="' + escapedLink + '" class="download-btn" download>下载</a>'} <button class="delete-btn" data-path="${escapedLink}" data-name="${escapedName}" data-type="${child.type}">删除</button></td>
       </tr>`;
     }
     
@@ -2336,6 +2362,19 @@ async function handleDelete(env, path) {
   }
 }
 
+// 递归收集目录树下所有存储键（文件内容、_meta、子目录 _dir 标记），支持分页
+async function listAllDescendantKeys(env, dirPath) {
+  const prefix = `${dirPath}/`;
+  const keys = [];
+  let cursor;
+  do {
+    const listResult = await env.WEBDAV_STORAGE.list({ prefix, cursor, limit: 1000 });
+    for (const key of listResult.keys || []) keys.push(key.name);
+    cursor = listResult.truncated ? listResult.cursor : undefined;
+  } while (cursor);
+  return keys;
+}
+
 // 处理 COPY 请求
 async function handleCopy(request, env, path) {
   try {
@@ -2415,10 +2454,19 @@ async function handleCopy(request, env, path) {
         }
       }
     } else {
-      // 复制目录（简化实现，只复制目录标记）
+      // 复制目录：复制目录标记，并递归复制目录下所有文件内容、元数据及子目录标记
       await env.WEBDAV_STORAGE.put(`${normalizedDestPath}_dir`, JSON.stringify(sourceInfo));
+
+      const descendantKeys = await listAllDescendantKeys(env, normalizedPath);
+      for (const key of descendantKeys) {
+        const destKey = `${normalizedDestPath}${key.slice(normalizedPath.length)}`;
+        const content = await env.WEBDAV_STORAGE.get(key, 'arrayBuffer');
+        if (content) {
+          await env.WEBDAV_STORAGE.put(destKey, content);
+        }
+      }
     }
-    
+
     // 更新父目录时间戳
     const destParentPath = getParentPath(normalizedDestPath);
     await updateDirectoryTimestamp(env, destParentPath);
@@ -2528,10 +2576,20 @@ async function handleMove(request, env, path) {
         await env.WEBDAV_STORAGE.delete(`${normalizedPath}_meta`);
       }
     } else {
-      // 移动目录
-      // 复制目录标记
+      // 移动目录：复制目录标记及所有子资源（文件内容、元数据、子目录标记）到新位置，
+      // 再删除源目录树，确保嵌套内容不会变成孤儿数据
       await env.WEBDAV_STORAGE.put(`${normalizedDestPath}_dir`, JSON.stringify(sourceInfo));
-      
+
+      const descendantKeys = await listAllDescendantKeys(env, normalizedPath);
+      for (const key of descendantKeys) {
+        const destKey = `${normalizedDestPath}${key.slice(normalizedPath.length)}`;
+        const content = await env.WEBDAV_STORAGE.get(key, 'arrayBuffer');
+        if (content) {
+          await env.WEBDAV_STORAGE.put(destKey, content);
+        }
+        await env.WEBDAV_STORAGE.delete(key);
+      }
+
       // 删除源目录标记
       await env.WEBDAV_STORAGE.delete(`${normalizedPath}_dir`);
     }
@@ -2850,34 +2908,31 @@ async function listDirectoryChildren(env, path) {
     const processedChildren = new Set();
     const children = [];
     
-    // 构建前缀
-    const prefix = normalizedPath === '/' ? '' : `${normalizedPath}/`;
-    
+    // 构建前缀。存储键统一带前导 '/'（见 normalizePath），
+    // 根目录的前缀同样使用 '/' 而不是空字符串，这样根目录和子目录可以复用同一套
+    // "相对路径 = key.substring(prefix.length)" 逻辑。
+    // 之前根目录使用空前缀时，key 本身仍以 '/' 开头，导致 !key.name.includes('/')
+    // 这类判断永远为假，根目录下的文件/子目录会被判断为"包含路径分隔符"而被跳过，
+    // 也就是说根目录下的文件永远不会出现在 PROPFIND / 目录列表页中。
+    const prefix = normalizedPath === '/' ? '/' : `${normalizedPath}/`;
+
     // 列出所有匹配前缀的键
     const listResult = await env.WEBDAV_STORAGE.list({
       prefix: prefix,
       limit: 1000 // 设置合理的限制，避免一次性加载太多项
     });
-    
+
     // 收集所有需要处理的目录信息
     const directoriesToProcess = [];
     for (const key of listResult.keys) {
       // 过滤掉session数据和非目录项
       if (key.name.endsWith('_meta') || !key.name.endsWith('_dir') || key.name.startsWith('session_')) continue;
-      
-      let dirName;
-      if (normalizedPath === '/') {
-        dirName = key.name.slice(0, -4);
-      } else {
-        const relativePath = key.name.substring(prefix.length);
-        const lastUnderscoreIndex = relativePath.lastIndexOf('_');
-        dirName = relativePath.substring(0, lastUnderscoreIndex);
-      }
-      
-      if ((normalizedPath === '/' && dirName.trim() === '') || 
-          processedChildren.has(dirName) || 
-          (normalizedPath !== '/' && dirName.includes('/'))) continue;
-      
+
+      const relativePath = key.name.substring(prefix.length);
+      const dirName = relativePath.slice(0, -4); // 去掉末尾的 "_dir"
+
+      if (dirName.trim() === '' || dirName.includes('/') || processedChildren.has(dirName)) continue;
+
       directoriesToProcess.push({ dirName, keyName: key.name });
     }
     
@@ -2906,33 +2961,13 @@ async function listDirectoryChildren(env, path) {
     const filesToProcess = [];
     for (const key of listResult.keys) {
       // 过滤掉session数据、元数据、目录和已处理的项
-      if (key.name.endsWith('_meta') || key.name.endsWith('_dir') || processedChildren.has(key.name) || key.name.startsWith('session_')) continue;
-      
-      let isFile = false;
-      let fileName = '';
-      let fileKeyName = '';
-      
-      if (normalizedPath === '/') {
-        const potentialDirMark = `${key.name}_dir`;
-        const isDirectory = listResult.keys.some(k => k.name === potentialDirMark);
-        
-        if (!isDirectory && !key.name.includes('/') && key.name.trim() !== '' && key.name !== '_dir') {
-          isFile = true;
-          fileName = key.name;
-          fileKeyName = key.name;
-        }
-      } else {
-        const relativePath = key.name.substring(prefix.length);
-        if (!relativePath.includes('/')) {
-          isFile = true;
-          fileName = relativePath;
-          fileKeyName = key.name;
-        }
-      }
-      
-      if (isFile && fileName) {
-        filesToProcess.push({ fileName, fileKeyName });
-      }
+      if (key.name.endsWith('_meta') || key.name.endsWith('_dir') || key.name.startsWith('session_')) continue;
+
+      const relativePath = key.name.substring(prefix.length);
+      // 相对路径为空或仍包含 '/' 说明它不是当前目录的直接子项（是更深层级的文件）
+      if (relativePath.trim() === '' || relativePath.includes('/') || processedChildren.has(relativePath)) continue;
+
+      filesToProcess.push({ fileName: relativePath, fileKeyName: key.name });
     }
     
     // 批量获取文件元数据

@@ -349,7 +349,13 @@ export default {
       if (path.startsWith("/s/")) return handlePublicShare(url, env);
 
       //-- API
-      if (path.startsWith("/api")) return fetch_api(request, env);
+      // "/get/<name>" is a plain, API-key-gated download link handled inside
+      // fetch_api (see below); it must be routed there explicitly or it
+      // falls through to the WebDAV handler further down, which would
+      // instead require WebDAV Basic Auth and treat "get" as a literal
+      // folder name in the file tree.
+      if (path.startsWith("/api") || path.startsWith("/get/"))
+        return fetch_api(request, env);
 
       if (
         (path === "/" || path === "/index.html") &&
@@ -407,10 +413,15 @@ async function handleListFiles(url, env) {
   );
 
   const normalizedPrefix = prefix === "/" ? "/" : normalizeStoragePath(prefix);
+  // Every key in this bucket carries a leading "/" (see normalizeStoragePath),
+  // so listing the root with an *empty* R2 prefix but a "/" delimiter makes
+  // R2 see that leading "/" as the very first delimiter match in every key
+  // and group the entire bucket under one bogus "/" pseudo-folder instead of
+  // returning root-level files/folders. Passing "/" itself as the prefix
+  // keeps the delimiter grouping relative to it, exactly like it already is
+  // for any non-root prefix below.
   let storagePrefix =
-    normalizedPrefix === "/"
-      ? undefined
-      : normalizeStorageKey(normalizedPrefix);
+    normalizedPrefix === "/" ? "/" : normalizeStorageKey(normalizedPrefix);
   if (storagePrefix && delimiter && !storagePrefix.endsWith("/")) {
     storagePrefix += "/";
   }
