@@ -175,6 +175,31 @@ All requests require `x-api-key` header or `?key=` query parameter.
 | GET | `/api/shares` | List shares |
 | POST | `/api/shares/revoke` | Revoke share |
 
+### MCP (Model Context Protocol)
+
+`POST /mcp` exposes the same file storage as MCP tools, so an MCP client
+(an AI agent, Claude Desktop, etc.) can list, read, write, delete, move and
+copy files in the bucket. It speaks JSON-RPC 2.0 over plain HTTP (the
+Streamable HTTP transport's non-streaming mode — one request in, one
+response out) and uses the same `x-api-key`/`?key=` auth as the REST API
+above. Available tools: `list_directory`, `list_all_folders`, `read_file`,
+`write_file`, `create_directory`, `delete_file`, `delete_directory`,
+`move_file`, `copy_file`, `get_file_info`.
+
+```bash
+# List the tools available
+curl -X POST "https://your-domain.com/mcp" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# Call a tool
+curl -X POST "https://your-domain.com/mcp" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_directory","arguments":{"path":"/"}}}'
+```
+
 ## 💻 Command Line Examples
 
 ### Upload File (Correct Usage)
