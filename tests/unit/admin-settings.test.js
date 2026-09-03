@@ -2,14 +2,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../../src/_worker.js";
 import { fetch_webdav, DEFAULT_SETTINGS } from "../../src/webdav.js";
-import { createMockEnv, basicAuthHeader } from "./mockStorage.js";
+import {
+  createMockEnv,
+  basicAuthHeader,
+  authedRequest,
+} from "./mockStorage.js";
 
 function api(env, path, init = {}) {
   const headers = new Headers(init.headers || {});
   if (init.body && !headers.has("Content-Type"))
     headers.set("Content-Type", "application/json");
   return worker.fetch(
-    new Request(`https://example.com${path}`, { ...init, headers }),
+    authedRequest(env, `https://example.com${path}`, { ...init, headers }),
     env,
   );
 }

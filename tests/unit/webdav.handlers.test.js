@@ -2,7 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetch_webdav } from "../../src/webdav.js";
 import worker from "../../src/_worker.js";
-import { createMockEnv, basicAuthHeader } from "./mockStorage.js";
+import {
+  createMockEnv,
+  basicAuthHeader,
+  authedRequest,
+} from "./mockStorage.js";
 
 const AUTH = basicAuthHeader("demo", "demo");
 function dav(env, path, init = {}) {
@@ -25,7 +29,7 @@ async function uploadViaApi(env, name, content) {
   const url = new URL("https://example.com/api/upload");
   url.searchParams.set("filename", name);
   const res = await worker.fetch(
-    new Request(url, {
+    authedRequest(env, url, {
       method: "PUT",
       headers: { "Content-Type": "text/plain" },
       body: content,

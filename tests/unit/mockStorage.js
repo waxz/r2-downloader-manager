@@ -273,10 +273,28 @@ export function createMockEnv(overrides = {}) {
     WEBDAV_STORAGE: new MockR2Bucket(),
     WEBDAV_USERNAME: "demo",
     WEBDAV_PASSWORD: "demo",
+    // /api/* now fails closed without a configured key (see _worker.js),
+    // so every test env needs one by default, same as the WebDAV creds
+    // above. Tests that specifically want the "unconfigured" case pass
+    // { APIKEYSECRET: undefined } to override this.
+    APIKEYSECRET: "test-api-key",
     ...overrides,
   };
 }
 
 export function basicAuthHeader(user, pass) {
   return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
+}
+
+// Builds a Request pre-authenticated for the given mock env's configured
+// API key (AUTH_KEY/APIKEYSECRET), so tests don't need to know or repeat
+// that key at every call site. Pass a key explicitly in `init.headers` to
+// override (e.g. to test a wrong/missing key).
+export function authedRequest(env, url, init = {}) {
+  const headers = new Headers(init.headers || {});
+  const key = env.AUTH_KEY || env.APIKEYSECRET;
+  if (key && !headers.has("x-api-key") && !headers.has("X-Api-Key")) {
+    headers.set("x-api-key", key);
+  }
+  return new Request(url, { ...init, headers });
 }

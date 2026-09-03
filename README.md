@@ -60,7 +60,13 @@ new_sqlite_classes = ["DownloadManager"]
 1. **Create `.dev.vars`**
   ```
   APIKEYSECRET=yourapi
+  WEBDAV_USERNAME=yourusername
+  WEBDAV_PASSWORD=yourpassword
   ```
+  `WEBDAV_USERNAME`/`WEBDAV_PASSWORD` are required for WebDAV access — there
+  is no default credential. If either is missing, all WebDAV requests are
+  rejected (fail closed), so WebDAV clients (Finder, Explorer, rclone, etc.)
+  won't be able to connect until both are set.
 2. **Start Server**
   ```bash
   npx wrangler dev -c ./wrangler.workers.toml
@@ -74,7 +80,11 @@ new_sqlite_classes = ["DownloadManager"]
     npx wrangler r2 bucket create my-drive-bucket
     ```
 
-2.  **Set the API Key (Recommended):**
+2.  **Set the API Key (Required):**
+
+    Without this, the file manager API (`/api/*`: uploads, downloads,
+    listing, jobs, shares, admin settings) rejects every request — there is
+    no "open" fallback mode.
 
     - Workers
     ```bash
@@ -84,6 +94,23 @@ new_sqlite_classes = ["DownloadManager"]
     - Pages
     ```bash
     npx wrangler pages secret put APIKEYSECRET
+    ```
+
+2b. **Set the WebDAV credentials (Required for WebDAV access):**
+
+    There is no default WebDAV username/password. If these aren't set,
+    every WebDAV request is rejected — WebDAV is simply unusable, not
+    protected by a fallback credential.
+
+    - Workers
+    ```bash
+    npx wrangler secret put WEBDAV_USERNAME -c ./wrangler.workers.toml
+    npx wrangler secret put WEBDAV_PASSWORD -c ./wrangler.workers.toml
+    ```
+    - Pages
+    ```bash
+    npx wrangler pages secret put WEBDAV_USERNAME
+    npx wrangler pages secret put WEBDAV_PASSWORD
     ```
 
 3.  **Deploy:**
