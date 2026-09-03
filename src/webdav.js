@@ -14,6 +14,20 @@ async function sha256(input) {
   return hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// 常量时间字符串比较：先对两个值做定长的 SHA-256 摘要，再逐字节异或累加比较，
+// 不做提前返回。用于比较凭据（WebDAV 用户名/密码、API Key），避免像
+// `a === b` 这种一旦发现不同字符就立刻短路返回的比较方式，被用来通过响应
+// 时间差逐字符猜测出正确的密钥。
+export async function timingSafeEqual(a, b) {
+  const [hashA, hashB] = await Promise.all([sha256(String(a ?? '')), sha256(String(b ?? ''))]);
+  let diff = hashA.length ^ hashB.length;
+  const len = Math.max(hashA.length, hashB.length);
+  for (let i = 0; i < len; i++) {
+    diff |= (hashA.charCodeAt(i) || 0) ^ (hashB.charCodeAt(i) || 0);
+  }
+  return diff === 0;
+}
+
 // 安全相关配置（管理员未在系统设置中覆盖时使用的默认值）
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1分钟窗口
 const MAX_REQUESTS_PER_WINDOW = 60; // 每分钟最多60个请求
@@ -939,26 +953,27 @@ async function pbkdf2(password, salt, iterations, keySize) {
 // 验证 WebDAV 凭据 - 直接从环境变量读取
 async function verifyWebDAVCredentials(env, username, password) {
   try {
-    // 直接从环境变量中获取WebDAV账号密码
-    const envUsername = env.WEBDAV_USERNAME || 'default';
-    const envPassword = env.WEBDAV_PASSWORD || 'default';
-    
-    console.log('验证凭据:', {
-      providedUsername: username,
-      providedPassword: password ? '[已提供]' : '[未提供]',
-      envUsername: envUsername,
-      envPassword: envPassword ? '[已配置]' : '[未配置]'
-    });
-    
-    // 简单的字符串匹配验证，但添加更健壮的错误处理
-    try {
-      const result = username === envUsername && password === envPassword;
-      console.log('验证结果:', result);
-      return result;
-    } catch (error) {
-      console.error('凭据比较错误:', error);
+    const envUsername = env.WEBDAV_USERNAME;
+    const envPassword = env.WEBDAV_PASSWORD;
+
+    // 安全默认：如果管理员从未配置 WEBDAV_USERNAME / WEBDAV_PASSWORD，
+    // 绝不能回退到一个写死在公开源码里、任何人都能查到的默认凭据
+    // （历史上这里曾经是 'default'/'default'）。未配置时直接拒绝所有
+    // WebDAV 认证请求——"失败即拒绝"，而不是"失败即放行"。
+    if (!envUsername || !envPassword) {
+      console.error('WebDAV 认证被拒绝：管理员尚未配置 WEBDAV_USERNAME / WEBDAV_PASSWORD');
       return false;
     }
+    if (!username || !password) {
+      return false;
+    }
+
+    // 使用常量时间比较，避免逐字符短路的 `===` 比较被用作计时侧信道
+    const [userMatch, passMatch] = await Promise.all([
+      timingSafeEqual(username, envUsername),
+      timingSafeEqual(password, envPassword),
+    ]);
+    return userMatch && passMatch;
   } catch (error) {
     console.error('验证 WebDAV 凭证时出错:', error);
     return false;

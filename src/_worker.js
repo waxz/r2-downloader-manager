@@ -35,6 +35,7 @@ import {
   getSettings,
   saveSettings,
   DEFAULT_SETTINGS,
+  timingSafeEqual,
 } from "./webdav.js";
 
 // ============================================================================
@@ -122,7 +123,11 @@ async function fetch_api(request, env) {
     const authKey = env.AUTH_KEY || env.APIKEYSECRET;
     if (authKey) {
       const k = url.searchParams.get("key") || request.headers.get("x-api-key");
-      if (k !== authKey) return jsonError("Unauthorized", 401);
+      // Constant-time compare: a plain `!==` short-circuits at the first
+      // mismatched character, which is a timing side-channel an attacker
+      // could use to guess the key one character at a time.
+      if (!k || !(await timingSafeEqual(k, authKey)))
+        return jsonError("Unauthorized", 401);
     }
 
     // --- Admin: system settings ---

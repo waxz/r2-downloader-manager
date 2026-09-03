@@ -1,1 +1,7 @@
 APIKEYSECRET=yourapi
+
+# Required for WebDAV access (Basic Auth, e.g. Windows/macOS Finder, rclone,
+# WebDAV apps). If either of these is missing, all WebDAV requests are
+# rejected — there is no default credential fallback.
+WEBDAV_USERNAME=yourusername
+WEBDAV_PASSWORD=yourpassword
