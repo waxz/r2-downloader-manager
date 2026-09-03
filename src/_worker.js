@@ -58,9 +58,16 @@ async function ensureWorkerStorage(env) {
   }
 }
 
-async function createWebDAVUploadPathMarkers(env, filePath) {
+// WebDAV (src/webdav.js) recognizes a directory exclusively via a "<path>_dir"
+// marker key — it has no concept of the REST API's own ".emptydir" convention
+// or of inferring directories from real nested keys. Writes coming from this
+// file (uploads, mkdir) must create these markers themselves, for every
+// ancestor up to and including `dirPath`, or the directory becomes invisible
+// to WebDAV clients (PROPFIND, GET-as-directory-listing) even though the
+// file manager can see it fine via R2's native prefix/delimiter grouping.
+async function ensureWebDAVDirMarkers(env, dirPath) {
   const now = new Date().toISOString();
-  let dir = getParentPath(filePath);
+  let dir = dirPath;
   while (dir && dir !== "/") {
     await env.WEBDAV_STORAGE.put(
       `${dir}_dir`,
@@ -268,6 +275,10 @@ async function fetch_api(request, env) {
       await env.WEBDAV_STORAGE.put(markerKey, new Uint8Array(0), {
         customMetadata: { type: "folder" },
       });
+      // Also write the "_dir" markers WebDAV needs (see ensureWebDAVDirMarkers)
+      // so a folder created from the file manager is visible to WebDAV
+      // clients too, not just the ".emptydir" marker used by /api/files.
+      await ensureWebDAVDirMarkers(env, folderPath);
       return jsonOk({ created: folderKey });
     }
 
@@ -297,7 +308,7 @@ async function fetch_api(request, env) {
           contentType,
         }),
       );
-      await createWebDAVUploadPathMarkers(env, filename);
+      await ensureWebDAVDirMarkers(env, getParentPath(filename));
 
       return jsonOk({ status: "uploaded", filename, size: body.length });
     }

@@ -1376,8 +1376,11 @@ const FM = {
       // List all files in folder
       const data = await API.call('/api/files?'+new URLSearchParams({ prefix, limit:'999' }));
       const keys = (data.files||[]).map(f=>f.key);
-      // Also delete the .emptydir marker
+      // Also delete the .emptydir marker and the WebDAV "_dir" marker, so the
+      // folder doesn't linger as a ghost directory visible only to WebDAV
+      // clients after being deleted from here.
       keys.push(prefix+'.emptydir');
+      keys.push(prefix.replace(/\/$/,'')+'_dir');
       if(keys.length) await API.call('/api/files/delete', { method:'POST', body:{ keys }});
       toast('Folder deleted','success');
       this.load();
