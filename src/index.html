@@ -374,7 +374,7 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
           <div class="stat-card">
             <div class="stat-label">WebDAV Access</div>
             <div class="stat-value"><span class="badge" id="adminWebdavStatus">—</span></div>
-            <div class="stat-sub">Basic-Auth protected access at the site root (e.g. for Windows/macOS/rclone clients)</div>
+            <div class="stat-sub">Basic-Auth protected access (e.g. for Windows/macOS/rclone clients), rooted at <code id="adminWebdavRoot">/</code></div>
           </div>
           <div class="stat-card">
             <div class="stat-label">Maintenance Mode</div>
@@ -405,6 +405,11 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
               <label>Default share expiry (hours)</label>
               <input type="number" id="setShareHours" min="1" max="999">
               <div class="hint">Pre-fills new share link expiry</div>
+            </div>
+            <div class="field">
+              <label>WebDAV root path</label>
+              <input type="text" id="setWebdavRoot" placeholder="/">
+              <div class="hint">Scopes WebDAV to this folder; clients see it as their "/". Falls back to "/" if left blank or invalid.</div>
             </div>
           </div>
 
@@ -640,6 +645,7 @@ const SYS = {
     const webdavBadge = $('#adminWebdavStatus');
     webdavBadge.textContent = this.info.webdavEnabled ? 'Enabled' : 'Disabled';
     webdavBadge.className = 'badge ' + (this.info.webdavEnabled ? 'badge-on' : 'badge-off');
+    $('#adminWebdavRoot').textContent = this.info.webdavRootPath || '/';
     const maintBadge = $('#adminMaintenanceStatus');
     maintBadge.textContent = this.info.maintenanceMode ? 'Active' : 'Off';
     maintBadge.className = 'badge ' + (this.info.maintenanceMode ? 'badge-failed' : 'badge-on');
@@ -1373,15 +1379,11 @@ const FM = {
   async deleteFolder(prefix) {
     if(!confirm('Delete folder and its contents?')) return;
     try {
-      // List all files in folder
-      const data = await API.call('/api/files?'+new URLSearchParams({ prefix, limit:'999' }));
-      const keys = (data.files||[]).map(f=>f.key);
-      // Also delete the .emptydir marker and the WebDAV "_dir" marker, so the
-      // folder doesn't linger as a ghost directory visible only to WebDAV
-      // clients after being deleted from here.
-      keys.push(prefix+'.emptydir');
-      keys.push(prefix.replace(/\/$/,'')+'_dir');
-      if(keys.length) await API.call('/api/files/delete', { method:'POST', body:{ keys }});
+      // The server walks the whole subtree under this prefix (however deep)
+      // and deletes every file, marker and nested subfolder itself — the
+      // one-level listing this page has is not enough to enumerate that
+      // client-side.
+      await API.call('/api/files/delete', { method:'POST', body:{ prefix }});
       toast('Folder deleted','success');
       this.load();
     } catch(e) { toast(e.message,'error'); }
@@ -1491,6 +1493,7 @@ const ADMIN = {
     $('#setMaxUpload').value = s.maxUploadSizeMB;
     $('#setRateLimit').value = s.rateLimitPerMinute;
     $('#setShareHours').value = s.defaultShareHours;
+    $('#setWebdavRoot').value = s.webdavRootPath || '/';
     $('#setWebdavEnabled').checked = !!s.webdavEnabled;
     $('#setAllowShares').checked = !!s.allowPublicShares;
     $('#setMaintenance').checked = !!s.maintenanceMode;
@@ -1505,6 +1508,7 @@ const ADMIN = {
       maxUploadSizeMB: parseInt($('#setMaxUpload').value, 10),
       rateLimitPerMinute: parseInt($('#setRateLimit').value, 10),
       defaultShareHours: parseInt($('#setShareHours').value, 10),
+      webdavRootPath: $('#setWebdavRoot').value.trim() || '/',
       webdavEnabled: $('#setWebdavEnabled').checked,
       allowPublicShares: $('#setAllowShares').checked,
       maintenanceMode: $('#setMaintenance').checked,

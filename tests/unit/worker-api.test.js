@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../../src/_worker.js";
-import { createMockEnv, authedRequest } from "./mockStorage.js";
+import { createMockEnv, authedRequest, basicAuthHeader } from "./mockStorage.js";
 
 function api(env, path, init = {}) {
   const headers = new Headers(init.headers || {});
@@ -174,6 +174,51 @@ test("POST /api/files/delete removes the file's content and _meta sidecar", asyn
   );
 });
 
+test("POST /api/files/delete with a prefix removes a folder's contents at every depth", async () => {
+  const env = createMockEnv();
+  await api(env, "/api/upload?filename=/docs/top.txt", {
+    method: "PUT",
+    body: "top",
+  });
+  await api(env, "/api/upload?filename=/docs/sub/nested.txt", {
+    method: "PUT",
+    body: "nested",
+  });
+  await api(env, "/api/files/mkdir", {
+    method: "POST",
+    body: JSON.stringify({ path: "/docs" }),
+  });
+  await api(env, "/api/files/mkdir", {
+    method: "POST",
+    body: JSON.stringify({ path: "/docs/sub" }),
+  });
+
+  // Deleting via the one-level listing the frontend has (only "/docs/top.txt"
+  // and the "/docs/sub/" subfolder, not what's inside it) used to leave
+  // "/docs/sub/nested.txt" behind, so the "deleted" folder would reappear on
+  // the next listing. The server must walk the whole subtree itself.
+  const del = await api(env, "/api/files/delete", {
+    method: "POST",
+    body: JSON.stringify({ prefix: "/docs/" }),
+  });
+  assert.equal(del.status, 200);
+
+  assert.equal(await env.WEBDAV_STORAGE.get("/docs/top.txt"), null);
+  assert.equal(await env.WEBDAV_STORAGE.get("/docs/sub/nested.txt"), null);
+  assert.equal(await env.WEBDAV_STORAGE.get("/docs/sub/nested.txt_meta"), null);
+  assert.equal(await env.WEBDAV_STORAGE.get("/docs/.emptydir"), null);
+  assert.equal(await env.WEBDAV_STORAGE.get("/docs/sub/.emptydir"), null);
+  assert.equal(await env.WEBDAV_STORAGE.get("/docs_dir"), null);
+  assert.equal(await env.WEBDAV_STORAGE.get("/docs/sub_dir"), null);
+
+  const listing = await api(env, "/api/files?prefix=/&delimiter=/");
+  const data = await listing.json();
+  assert.ok(
+    !(data.folders || []).includes("/docs/"),
+    "the deleted folder must not reappear in a fresh listing",
+  );
+});
+
 test("POST /api/files/mkdir creates an empty-dir marker", async () => {
   const env = createMockEnv();
   const res = await api(env, "/api/files/mkdir", {
@@ -207,4 +252,68 @@ test("API key auth: requests are rejected without the correct key when APIKEYSEC
     env,
   );
   assert.equal(allowed.status, 200);
+});
+
+test("GET / from a browser serves the admin frontend", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/", {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0" },
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /mock frontend/);
+});
+
+test("GET / from a WebDAV client (non-browser User-Agent, no credentials yet) gets a Basic-Auth challenge, not the frontend", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/", {
+      headers: { "User-Agent": "Microsoft-WebDAV-MiniRedir/10.0.19045" },
+    }),
+    env,
+  );
+  // Serving the frontend's HTML here instead of a proper 401 challenge is
+  // exactly what stopped WebDAV clients from being able to mount "/": they
+  // never learn the server wants Basic Auth, and the response carries none
+  // of the DAV capability headers a client checks for.
+  assert.equal(res.status, 401);
+  assert.match(res.headers.get("WWW-Authenticate") || "", /Basic/);
+  assert.ok(res.headers.get("DAV"), "must advertise DAV capability");
+  const body = await res.text();
+  assert.ok(!body.includes("mock frontend"));
+});
+
+test("GET / with WebDAV Basic Auth credentials reaches WebDAV even with a browser-like User-Agent", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/", {
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Authorization: basicAuthHeader("demo", "demo"),
+      },
+    }),
+    env,
+  );
+  const body = await res.text();
+  assert.ok(
+    !body.includes("mock frontend"),
+    "a request carrying WebDAV credentials must never be routed to the frontend",
+  );
+});
+
+test("HEAD / with valid WebDAV credentials returns a real WebDAV response, not the frontend", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/", {
+      method: "HEAD",
+      headers: {
+        "User-Agent": "Microsoft-WebDAV-MiniRedir/10.0.19045",
+        Authorization: basicAuthHeader("demo", "demo"),
+      },
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
 });

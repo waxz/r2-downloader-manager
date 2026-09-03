@@ -58,7 +58,55 @@ export const DEFAULT_SETTINGS = {
   allowPublicShares: true,
   maintenanceMode: false,
   webdavEnabled: true,
+  // The R2 key prefix WebDAV clients see as "/". Lets an admin scope the
+  // WebDAV-exposed namespace to a subfolder of the bucket instead of the
+  // whole thing. Always resolved through normalizeWebdavRoot() before use —
+  // an empty, missing, or otherwise invalid value always falls back to '/'
+  // rather than ever leaving WebDAV unable to resolve a root at all.
+  webdavRootPath: "/",
 };
+
+// Validates/normalizes a candidate WebDAV root path, always returning a safe
+// value: a normalized absolute path with no ".." traversal segments, or '/'
+// for anything empty, non-string, or otherwise unusable. Every caller that
+// reads settings.webdavRootPath must go through this rather than trust the
+// stored value directly, since it's meant to be admin-editable free text.
+export function normalizeWebdavRoot(root) {
+  if (typeof root !== "string") return "/";
+  const trimmed = root.trim();
+  if (!trimmed) return "/";
+  const normalized = normalizePath(trimmed);
+  if (normalized.split("/").some((segment) => segment === "..")) return "/";
+  return normalized;
+}
+
+// Maps a path as seen by a WebDAV client (relative to its mounted root) to
+// the real R2 key it corresponds to in the bucket.
+export function webdavPathToStorage(davPath, root) {
+  const normalizedRoot = normalizeWebdavRoot(root);
+  if (normalizedRoot === "/") return normalizePath(davPath);
+  const rel = normalizePath(davPath);
+  if (rel === "/") return normalizedRoot;
+  return normalizePath(normalizedRoot + rel);
+}
+
+// The inverse of webdavPathToStorage(): maps a real R2 key back to the path
+// a WebDAV client should see for it (relative to its mounted root). Used
+// anywhere a path is written into a response — PROPFIND hrefs, the
+// directory-listing HTML, Content-Location — so clients never see storage
+// keys outside their configured root.
+export function storagePathToWebdav(storagePath, root) {
+  const normalizedRoot = normalizeWebdavRoot(root);
+  if (normalizedRoot === "/") return storagePath;
+  if (storagePath === normalizedRoot) return "/";
+  if (storagePath.startsWith(`${normalizedRoot}/`)) {
+    return storagePath.slice(normalizedRoot.length) || "/";
+  }
+  // Outside the configured root — shouldn't normally happen since every
+  // storage path handled here originated from webdavPathToStorage() in the
+  // first place. Returned as-is rather than throwing.
+  return storagePath;
+}
 
 export async function getSettings(env) {
   ensureR2CompatibleStorage(env);
@@ -88,6 +136,12 @@ export function sanitizeSettingsPatch(body) {
   }
   if (Number.isFinite(body.defaultShareHours)) {
     out.defaultShareHours = Math.min(Math.max(1, body.defaultShareHours), 999);
+  }
+  if (typeof body.webdavRootPath === "string") {
+    // Always normalized rather than rejected outright: a bad/empty value
+    // resolves to '/' here too, so WebDAV can never end up unable to
+    // resolve a root because of a malformed admin-panel submission.
+    out.webdavRootPath = normalizeWebdavRoot(body.webdavRootPath);
   }
   for (const key of ["allowPublicShares", "maintenanceMode", "webdavEnabled"]) {
     if (typeof body[key] === "boolean") out[key] = body[key];
@@ -376,18 +430,25 @@ export async function fetch_webdav(request, env, ctx) {
         
         // 确保路径规范化，特别是处理根路径时
         const davPath = path === '/' ? '/' : path;
-        
+
+        // 管理员可在系统设置中配置一个自定义 WebDAV 根路径（存储桶内的某个
+        // 前缀），客户端看到的所有路径都相对于它。请求路径在这里统一换算成
+        // 真实的存储路径，交给下面各 handler 处理；各 handler 生成响应中的
+        // href/Content-Location 等面向客户端的路径时，再换算回客户端视角。
+        const webdavRoot = normalizeWebdavRoot(settings.webdavRootPath);
+        const storagePath = webdavPathToStorage(davPath, webdavRoot);
+
         // 处理 WebDAV 方法
         switch (request.method) {
           case 'OPTIONS':
             return addCsrfToken(handleOptions());
           case 'PROPFIND':
-            return addCsrfToken(await handlePropfind(request, env, davPath));
+            return addCsrfToken(await handlePropfind(request, env, storagePath, webdavRoot));
           case 'GET':
-            return addCsrfToken(await handleGet(env, davPath, request));
+            return addCsrfToken(await handleGet(env, storagePath, request, webdavRoot));
           case 'HEAD':
             // 处理HEAD请求，与GET类似但不返回内容
-            const getResponse = await handleGet(env, davPath, request);
+            const getResponse = await handleGet(env, storagePath, request, webdavRoot);
             return addCsrfToken(new Response(null, {
               headers: getResponse.headers,
               status: getResponse.status
@@ -404,16 +465,16 @@ export async function fetch_webdav(request, env, ctx) {
                 }
               }));
             }
-            return addCsrfToken(await handlePut(request, env, davPath));
+            return addCsrfToken(await handlePut(request, env, storagePath, webdavRoot));
           case 'DELETE':
-            return addCsrfToken(await handleDelete(env, davPath));
+            return addCsrfToken(await handleDelete(env, storagePath));
           case 'MKCOL':
-            return addCsrfToken(await handleMkcol(env, davPath));
+            return addCsrfToken(await handleMkcol(env, storagePath, webdavRoot));
           // 添加更多WebDAV方法支持
           case 'COPY':
-            return addCsrfToken(await handleCopy(request, env, davPath));
+            return addCsrfToken(await handleCopy(request, env, storagePath, webdavRoot));
           case 'MOVE':
-            return addCsrfToken(await handleMove(request, env, davPath));
+            return addCsrfToken(await handleMove(request, env, storagePath, webdavRoot));
           case 'PROPPATCH':
             // PROPPATCH方法用于修改资源属性，基本实现以支持更多客户端
             return addCsrfToken(new Response(null, { 
@@ -439,7 +500,7 @@ export async function fetch_webdav(request, env, ctx) {
             }));
           case 'POST':
               // 处理POST请求（用于创建文件夹、上传文件等操作）
-              return addCsrfToken(await handlePost(request, env, davPath));
+              return addCsrfToken(await handlePost(request, env, storagePath));
             default:
               // 为不支持的方法返回更友好的响应，确保移动文件管理器兼容性
               return addCsrfToken(new Response('方法不支持', { 
@@ -1202,24 +1263,24 @@ function handleOptions() {
 const MAX_PROPFIND_DEPTH = 2;
 
 // 处理 PROPFIND 请求
-async function handlePropfind(request, env, path) {
+async function handlePropfind(request, env, path, webdavRoot = '/') {
   try {
     // 规范化路径
     const normalizedPath = normalizePath(path);
-    
+
     // 获取深度头，为安卓文件管理器提供更好的兼容性
     const depthHeader = request.headers.get('Depth') || '1'; // 默认为1以显示目录内容
     // 安全处理：限制最大深度，防止无限递归
     let depth = depthHeader === 'infinity' ? MAX_PROPFIND_DEPTH : parseInt(depthHeader) || 1; // 安卓客户端通常期望至少为1
     // 确保深度不超过最大限制
     depth = Math.min(depth, MAX_PROPFIND_DEPTH);
-    
-    // 确保根目录存在
-    await ensureRootDirectory(env);
-    
+
+    // 确保根目录存在（若配置了自定义 WebDAV 根路径，同时确保该路径本身存在）
+    await ensureRootDirectory(env, webdavRoot);
+
     // 检查资源是否存在
     let resourceInfo = await getResourceInfo(env, normalizedPath);
-    
+
     // 如果资源不存在但请求的是目录，尝试创建或模拟响应
     if (!resourceInfo) {
       // 如果请求的是根目录或类似目录的路径，返回空目录响应而不是404
@@ -1233,18 +1294,20 @@ async function handlePropfind(request, env, path) {
         return new Response('资源不存在', { status: 404 });
       }
     }
-    
+
     // 构建 XML 响应，使用完整的DAV命名空间
     let xmlBody = '<?xml version="1.0" encoding="utf-8" ?>\n<D:multistatus xmlns:D="DAV:">';
-    
+
     // 添加当前资源的响应，传入完整的resourceInfo
+    // href 需要转换回客户端视角的路径（相对于其挂载的 WebDAV 根目录），
+    // 而不是存储桶中的真实键路径
     xmlBody += createResourceResponse(
-      normalizedPath, 
-      resourceInfo.type === 'directory', 
+      storagePathToWebdav(normalizedPath, webdavRoot),
+      resourceInfo.type === 'directory',
       new Date(resourceInfo.modifiedAt),
       resourceInfo
     );
-    
+
     // 如果是深度遍历且是目录，列出子资源
     // 安卓客户端通常需要正确的目录内容列表
     if (depth > 0 && resourceInfo.type === 'directory') {
@@ -1255,14 +1318,14 @@ async function handlePropfind(request, env, path) {
         console.error('列出目录子资源失败:', error);
         // 即使失败也继续，至少返回当前目录信息
       }
-      
+
       // 确保子资源列表不为空时才处理
       if (children && children.length > 0) {
         for (const child of children) {
           const childPath = normalizedPath === '/' ? `/${child.name}` : `${normalizedPath}/${child.name}`;
           xmlBody += createResourceResponse(
-            childPath, 
-            child.type === 'directory', 
+            storagePathToWebdav(childPath, webdavRoot),
+            child.type === 'directory',
             new Date(child.modifiedAt),
             child
           );
@@ -1455,23 +1518,23 @@ async function handleHead(env, path, request) {
 }
 
 // 处理 GET 请求
-async function handleGet(env, path, request) {
+async function handleGet(env, path, request, webdavRoot = '/') {
   try {
     const normalizedPath = normalizePath(path);
-    
-    // 确保根目录存在
-    await ensureRootDirectory(env);
-    
+
+    // 确保根目录存在（若配置了自定义 WebDAV 根路径，同时确保该路径本身存在）
+    await ensureRootDirectory(env, webdavRoot);
+
     // 获取资源信息
     const resourceInfo = await getResourceInfo(env, normalizedPath);
     if (!resourceInfo) {
       return new Response('文件不存在', { status: 404 });
     }
-    
+
     // 检查是否是目录
     if (resourceInfo.type === 'directory') {
       // 如果是目录，返回目录列表的 HTML 页面
-      return generateDirectoryListing(env, normalizedPath, resourceInfo);
+      return generateDirectoryListing(env, normalizedPath, resourceInfo, webdavRoot);
     }
     
     // 从 KV 获取文件内容
@@ -1543,20 +1606,23 @@ async function handleGet(env, path, request) {
 }
 
 // 生成目录列表 HTML
-async function generateDirectoryListing(env, path, resourceInfo) {
+async function generateDirectoryListing(env, path, resourceInfo, webdavRoot = '/') {
   try {
     const children = await listDirectoryChildren(env, path);
-    
+
    // 过滤掉任何空名称文件、目录标记和根目录标记
-    const filteredChildren = children.filter(child => 
+    const filteredChildren = children.filter(child =>
       child.name.trim() !== '' && child.name !== '_dir' && child.name !== '/'
     );
-    
+
+    // 页面中出现的路径一律使用客户端视角的路径（相对于其挂载的 WebDAV 根目录）
+    const clientPath = storagePathToWebdav(path, webdavRoot);
+
     let html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>目录列表 - ${path}</title>
+  <title>目录列表 - ${escapeHtml(clientPath)}</title>
   <style>
     /* 全局样式 */
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1936,7 +2002,7 @@ async function generateDirectoryListing(env, path, resourceInfo) {
   </style>
 </head>
 <body>
-  <h1>目录: ${escapeHtml(path)}</h1>
+  <h1>目录: ${escapeHtml(clientPath)}</h1>
   
   <!-- 操作按钮区域 -->
   <div class="actions">
@@ -2001,11 +2067,13 @@ async function generateDirectoryListing(env, path, resourceInfo) {
       <th>操作</th>
     </tr>`;
     
-    // 添加父目录链接
-    if (path !== '/') {
+    // 添加父目录链接。判断依据是存储路径是否等于 WebDAV 挂载根目录（而不是
+    // 存储桶的绝对根目录 '/'）——否则配置了自定义根路径时，客户端会在自己的
+    // 根目录看到一个 ".." 链接，从而越权访问挂载根目录以外的存储桶内容。
+    if (path !== webdavRoot) {
       const parentPath = getParentPath(path);
       // 使用简单直接的方式构建父目录链接，确保不会出现双斜杠
-      const parentLink = escapeHtml(`${parentPath}`.replace(/\/\//g, '/'));
+      const parentLink = escapeHtml(storagePathToWebdav(`${parentPath}`.replace(/\/\//g, '/'), webdavRoot));
       html += `
       <tr>
         <td><a href="${parentLink}" class="dir">..</a></td>
@@ -2025,8 +2093,8 @@ async function generateDirectoryListing(env, path, resourceInfo) {
         } else {
           fullLink = `${path}/${child.name}`;
         }
-      // 最后再清理可能存在的双斜杠
-      fullLink = fullLink.replace(/\/\//g, '/');
+      // 最后再清理可能存在的双斜杠，并转换回客户端视角的路径
+      fullLink = storagePathToWebdav(fullLink.replace(/\/\//g, '/'), webdavRoot);
       const linkClass = child.type === 'directory' ? 'dir' : 'file';
       // 确保根目录下的子目录不会显示额外的斜杠
       const displayName = child.type === 'directory' ? `${child.name}/` : child.name;
@@ -2337,12 +2405,12 @@ async function generateDirectoryListing(env, path, resourceInfo) {
 }
 
 // 处理 PUT 请求
-async function handlePut(request, env, path) {
+async function handlePut(request, env, path, webdavRoot = '/') {
   try {
     const normalizedPath = normalizePath(path);
-    
-    // 确保根目录存在
-    await ensureRootDirectory(env);
+
+    // 确保根目录存在（若配置了自定义 WebDAV 根路径，同时确保该路径本身存在）
+    await ensureRootDirectory(env, webdavRoot);
     
     // 读取请求体
     const content = await request.arrayBuffer();
@@ -2405,7 +2473,7 @@ async function handlePut(request, env, path) {
         'DAV': '1, 2, 3',
         'MS-Author-Via': 'DAV',
         'Public': 'OPTIONS, GET, HEAD, DELETE, PUT, PROPFIND, MKCOL',
-          'Content-Location': `${normalizedPath}`
+          'Content-Location': storagePathToWebdav(normalizedPath, webdavRoot)
       }
     });
   } catch (error) {
@@ -2482,7 +2550,7 @@ async function listAllDescendantKeys(env, dirPath) {
 }
 
 // 处理 COPY 请求
-async function handleCopy(request, env, path) {
+async function handleCopy(request, env, path, webdavRoot = '/') {
   try {
     const normalizedPath = normalizePath(path);
     
@@ -2511,16 +2579,16 @@ async function handleCopy(request, env, path) {
       destinationUrl = new URL(normalizedDestHeader, `${currentUrl.protocol}//${currentUrl.host}`);
     }
     let destinationPath = destinationUrl.pathname;
-    
-    // 不再需要移除/dav前缀
-      // destinationPath已直接使用
-    
-    const normalizedDestPath = normalizePath(destinationPath);
-    
+
+    // Destination 头中的路径是客户端视角的路径（相对于其挂载的 WebDAV 根目录），
+    // 需要换算成存储桶中的真实键路径，才能与 normalizedPath（已经是存储路径）
+    // 进行比较和操作
+    const normalizedDestPath = webdavPathToStorage(destinationPath, webdavRoot);
+
     // 检查源资源是否存在
     const sourceInfo = await getResourceInfo(env, normalizedPath);
     if (!sourceInfo) {
-      return new Response('源资源不存在', { 
+      return new Response('源资源不存在', {
         status: 404,
         headers: {
           'Access-Control-Allow-Origin': '*',
@@ -2529,7 +2597,7 @@ async function handleCopy(request, env, path) {
         }
       });
     }
-    
+
     // 检查目标资源是否存在
     const destInfo = await getResourceInfo(env, normalizedDestPath);
     if (destInfo) {
@@ -2599,7 +2667,7 @@ async function handleCopy(request, env, path) {
 }
 
 // 处理 MOVE 请求
-async function handleMove(request, env, path) {
+async function handleMove(request, env, path, webdavRoot = '/') {
   try {
     const normalizedPath = normalizePath(path);
     
@@ -2628,16 +2696,16 @@ async function handleMove(request, env, path) {
       destinationUrl = new URL(normalizedDestHeader, `${currentUrl.protocol}//${currentUrl.host}`);
     }
     let destinationPath = destinationUrl.pathname;
-    
-    // 不再需要移除/dav前缀
-      // destinationPath已直接使用
-    
-    const normalizedDestPath = normalizePath(destinationPath);
-    
+
+    // Destination 头中的路径是客户端视角的路径（相对于其挂载的 WebDAV 根目录），
+    // 需要换算成存储桶中的真实键路径，才能与 normalizedPath（已经是存储路径）
+    // 进行比较和操作
+    const normalizedDestPath = webdavPathToStorage(destinationPath, webdavRoot);
+
     // 检查源资源是否存在
     const sourceInfo = await getResourceInfo(env, normalizedPath);
     if (!sourceInfo) {
-      return new Response('源资源不存在', { 
+      return new Response('源资源不存在', {
         status: 404,
         headers: {
           'Access-Control-Allow-Origin': '*',
@@ -2646,7 +2714,7 @@ async function handleMove(request, env, path) {
         }
       });
     }
-    
+
     // 检查目标资源是否存在
     const destInfo = await getResourceInfo(env, normalizedDestPath);
     if (destInfo) {
@@ -2729,12 +2797,12 @@ async function handleMove(request, env, path) {
 }
 
 // 处理 MKCOL 请求（创建目录）
-async function handleMkcol(env, path) {
+async function handleMkcol(env, path, webdavRoot = '/') {
   try {
     const normalizedPath = normalizePath(path);
-    
-    // 确保根目录存在
-    await ensureRootDirectory(env);
+
+    // 确保根目录存在（若配置了自定义 WebDAV 根路径，同时确保该路径本身存在）
+    await ensureRootDirectory(env, webdavRoot);
     
     // 检查路径是否已存在
     const existingInfo = await getResourceInfo(env, normalizedPath);
@@ -2957,11 +3025,11 @@ async function updateDirectoryTimestamp(env, path) {
 }
 
 // 确保根目录存在
-async function ensureRootDirectory(env) {
+async function ensureRootDirectory(env, webdavRoot = '/') {
   try {
     const rootDirPath = '/_dir';
     const rootExists = await env.WEBDAV_STORAGE.get(rootDirPath) !== null;
-    
+
     if (!rootExists) {
       // 只创建一个根目录标记
       await env.WEBDAV_STORAGE.put(rootDirPath, JSON.stringify({
@@ -2969,6 +3037,14 @@ async function ensureRootDirectory(env) {
         createdAt: new Date().toISOString(),
         modifiedAt: new Date().toISOString()
       }));
+    }
+
+    // 如果管理员配置了自定义 WebDAV 根路径，确保该路径本身（及其所有祖先目录）
+    // 也已存在——否则客户端在这个根路径从未被显式创建过（例如从未执行过 MKCOL）
+    // 时会看到"资源不存在"，而不是一个空目录
+    const normalizedRoot = normalizeWebdavRoot(webdavRoot);
+    if (normalizedRoot !== '/') {
+      await ensureDirectoryExists(env, normalizedRoot);
     }
   } catch (error) {
     console.error('初始化根目录失败:', error);

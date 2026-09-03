@@ -8,7 +8,7 @@
 		"dev-worker": "wrangler dev -c ./wrangler.workers.toml",
 		"start": "wrangler dev",
 		"test:python": "python3 -m unittest -q tests.test_webdav_and_download",
-		"test:unit": "node --test tests/unit/*.test.js",
+		"test:unit": "node --test --test-concurrency=1 tests/unit/*.test.js",
 		"test": "npm run test:unit",
 		"format": "prettier . --write",
 		"format:check": "prettier . --check"

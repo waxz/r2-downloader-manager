@@ -25,6 +25,22 @@ function decodeRequestValue(value) {
 function ensureLeadingSlash(value) {
   return normalizeStoragePath(value);
 }
+// Distinguishes a browser navigating to "/" (which should see the admin
+// frontend) from a WebDAV client mounting "/" as its root (which needs the
+// real WebDAV response — a directory listing, or a 401 Basic-Auth challenge
+// carrying the DAV capability headers — to be able to connect at all).
+// Mirrors the same heuristic fetch_webdav's own auth layer already uses
+// (see the User-Agent check next to verifyWebDAVCredentials in webdav.js)
+// so both layers agree on who counts as a browser.
+function looksLikeBrowserRequest(request) {
+  // A request already carrying WebDAV Basic Auth credentials (e.g. a
+  // client reconnecting with cached credentials) is unambiguously a
+  // WebDAV client, regardless of what its User-Agent claims.
+  const authHeader = request.headers.get("Authorization") || "";
+  if (authHeader.startsWith("Basic ")) return false;
+  const userAgent = request.headers.get("User-Agent") || "";
+  return /Mozilla|Chrome|Safari/i.test(userAgent);
+}
 import {
   fetch_webdav,
   normalizeStoragePath,
@@ -36,6 +52,7 @@ import {
   saveSettings,
   DEFAULT_SETTINGS,
   timingSafeEqual,
+  normalizeWebdavRoot,
 } from "./webdav.js";
 
 // ============================================================================
@@ -116,6 +133,7 @@ async function fetch_api(request, env) {
         siteTitle: settings.siteTitle,
         maintenanceMode: settings.maintenanceMode,
         webdavEnabled: settings.webdavEnabled,
+        webdavRootPath: normalizeWebdavRoot(settings.webdavRootPath),
       });
     }
 
@@ -191,13 +209,48 @@ async function fetch_api(request, env) {
         : body.filename
           ? [body.filename]
           : [];
-      if (!keys.length) return jsonError("No keys");
-      // Also delete associated .folder markers if deleting folders
-      await Promise.all(keys.map((k) => Promise.all([
-        env.WEBDAV_STORAGE.delete(k),
-        env.WEBDAV_STORAGE.delete(`${k}_meta`),
-      ])));
-      return jsonOk({ deleted: keys.length });
+      const prefixes = Array.isArray(body.prefixes)
+        ? body.prefixes
+        : body.prefix
+          ? [body.prefix]
+          : [];
+      if (!keys.length && !prefixes.length) return jsonError("No keys");
+
+      const allKeys = new Set();
+      for (const k of keys) {
+        allKeys.add(k);
+        allKeys.add(`${k}_meta`);
+      }
+      // A folder's children aren't necessarily flat: the frontend only knows
+      // about the one level it last listed, so a folder containing
+      // subfolders can't be fully enumerated client-side without walking the
+      // whole tree itself. Instead, the client sends the folder's own
+      // prefix and the server lists (and deletes) everything under it,
+      // however deep, the same way WebDAV's recursive COPY/MOVE do.
+      for (const rawPrefix of prefixes) {
+        const normalizedPrefix = normalizeStoragePath(rawPrefix).replace(/\/$/, "");
+        if (!normalizedPrefix || normalizedPrefix === "/") continue;
+        allKeys.add(`${normalizedPrefix}_dir`);
+        allKeys.add(`${normalizedPrefix}/.emptydir`);
+        const listPrefix = `${normalizedPrefix}/`;
+        let cursor;
+        do {
+          const listed = await env.WEBDAV_STORAGE.list({
+            prefix: listPrefix,
+            cursor,
+            limit: 1000,
+          });
+          for (const object of listed.objects || []) allKeys.add(object.key);
+          cursor = listed.truncated ? listed.cursor : undefined;
+        } while (cursor);
+      }
+
+      const finalKeys = Array.from(allKeys);
+      if (finalKeys.length) await env.WEBDAV_STORAGE.delete(finalKeys);
+      // Reported count is the number of logical items requested (files or
+      // folders), not the expanded R2 key count (which includes sidecar
+      // "_meta"/marker keys the caller never asked about directly).
+      return jsonOk({ deleted: keys.length + prefixes.length });
     }
 
     if (path === "/api/files/rename" && method === "POST") {
@@ -423,7 +476,11 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
       const method = request.method;
-      console.log("Incoming request:", { method, path,request });
+      // Log only primitive fields, not the raw Request object: logging the
+      // whole object (its AbortSignal in particular) has been observed to
+      // trip up structured-clone-based log/IPC pipelines — notably Node's
+      // test runner reporter when tests exercise this path directly.
+      console.log("Incoming request:", { method, path });
 
       // --- Public share (no auth) ---
       if (path.startsWith("/s/")) return handlePublicShare(url, env);
@@ -439,14 +496,11 @@ export default {
 
       if (
         (path === "/" || path === "/index.html") &&
-        ["GET", "HEAD"].includes(method)
+        ["GET", "HEAD"].includes(method) &&
+        looksLikeBrowserRequest(request)
       ) {
         return env.ASSETS.fetch(request);
       }
-
-
-      
-
 
       //-- Webdav
       if (path.startsWith("/")) return fetch_webdav(request, env);
