@@ -3,33 +3,75 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☁️</text></svg>">
 <title>R2 Drive</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --c-primary:#f6821f;--c-primary-h:rgba(246,130,31,.1);--c-bg:#f0f2f5;--c-card:#fff;
-  --c-border:#dfe6e9;--c-text:#2d3436;--c-muted:#636e72;--c-success:#00b894;
-  --c-danger:#d63031;--c-info:#0984e3;--c-warning:#fdcb6e;--radius:8px;
+  --c-primary:#f6821f;--c-primary-h:rgba(246,130,31,.12);--c-bg:#f4f5f7;--c-card:#fff;
+  --c-border:#e2e8f0;--c-text:#1e293b;--c-muted:#64748b;--c-success:#16a34a;
+  --c-danger:#dc2626;--c-info:#2563eb;--c-warning:#d97706;--radius:10px;
   --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
-  --shadow-lg:0 8px 24px rgba(0,0,0,.1);
+  --shadow-lg:0 12px 32px rgba(0,0,0,.14);
+  --sidebar-w:250px;
+  --sb-bg:#111827;--sb-bg-active:#1f2937;--sb-text:#cbd5e1;--sb-text-dim:#6b7280;--sb-border:#1f2937;
 }
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--c-bg);color:var(--c-text);line-height:1.5}
-.app{max-width:960px;margin:0 auto;padding:16px}
-/* Header */
-.header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-.header h1{font-size:22px;white-space:nowrap}
-.header h1 span{color:var(--c-primary)}
-.auth-box{display:flex;align-items:center;gap:8px}
-.auth-box input{width:180px}
-.auth-dot{width:10px;height:10px;border-radius:50%;background:#b2bec3}
-.auth-dot.ok{background:var(--c-success)}
-/* Inputs */
-input[type=text],input[type=password],select,textarea{
-  padding:8px 12px;border:1px solid var(--c-border);border-radius:var(--radius);font-size:14px;
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--c-bg);color:var(--c-text);line-height:1.5;font-size:14px}
+a{color:inherit}
+/* ============ Shell layout ============ */
+.shell{display:flex;min-height:100vh}
+.sidebar{width:var(--sidebar-w);flex:0 0 var(--sidebar-w);background:var(--sb-bg);color:var(--sb-text);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:100}
+.brand{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid var(--sb-border)}
+.brand-icon{font-size:24px;line-height:1}
+.brand-text{overflow:hidden}
+.brand-name{font-size:15px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand-sub{font-size:11px;color:var(--sb-text-dim);letter-spacing:.3px;text-transform:uppercase}
+.nav{flex:1;padding:12px 10px;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;
+  font-size:13px;font-weight:600;color:var(--sb-text);margin-bottom:2px;transition:all .12s;user-select:none;
+  border-left:3px solid transparent}
+.nav-item .nav-icon{font-size:16px;width:18px;text-align:center}
+.nav-item:hover{background:var(--sb-bg-active);color:#fff}
+.nav-item.active{background:var(--c-primary-h);color:var(--c-primary);border-left-color:var(--c-primary)}
+.nav-divider{height:1px;background:var(--sb-border);margin:10px 6px}
+.nav-badge{margin-left:auto;background:var(--c-danger);color:#fff;font-size:10px;font-weight:700;
+  border-radius:10px;padding:1px 6px;min-width:16px;text-align:center}
+.sidebar-footer{border-top:1px solid var(--sb-border);padding:12px 14px 16px;display:flex;flex-direction:column;gap:10px}
+.auth-row{display:flex;align-items:center;gap:8px}
+.auth-dot{width:9px;height:9px;border-radius:50%;background:#4b5563;flex:0 0 auto}
+.auth-dot.ok{background:var(--c-success);box-shadow:0 0 0 3px rgba(22,163,74,.25)}
+.auth-row input{background:#1f2937;border:1px solid #2d3748;color:#e5e7eb;font-size:12px;padding:6px 10px}
+.auth-row input::placeholder{color:#6b7280}
+.auth-row input:focus{border-color:var(--c-primary)}
+.version-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sb-text-dim);cursor:pointer;
+  padding:4px 2px;border-radius:6px;transition:background .12s}
+.version-row:hover{background:var(--sb-bg-active);color:#e5e7eb}
+.update-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:#334155;color:#cbd5e1}
+.update-badge.available{background:#78350f;color:#fde68a}
+.update-badge.checking{background:#334155;color:#94a3b8}
+/* Main column */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:12px;padding:14px 24px;background:var(--c-card);
+  border-bottom:1px solid var(--c-border);position:sticky;top:0;z-index:20}
+.topbar-title{font-size:17px;font-weight:700}
+.hamburger{display:none;background:none;border:none;font-size:20px;cursor:pointer;color:var(--c-text)}
+.content{padding:20px 24px 40px;max-width:1200px;width:100%;margin:0 auto}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99}
+@media(max-width:900px){
+  .sidebar{position:fixed;left:0;top:0;transform:translateX(-100%);transition:transform .2s ease;box-shadow:var(--shadow-lg)}
+  .shell.sidebar-open .sidebar{transform:translateX(0)}
+  .shell.sidebar-open .sidebar-overlay{display:block}
+  .hamburger{display:block}
+  .content{padding:16px}
+}
+/* ============ Inputs ============ */
+input[type=text],input[type=password],input[type=number],select,textarea{
+  padding:8px 12px;border:1px solid var(--c-border);border-radius:var(--radius);font-size:13px;
   width:100%;background:#fff;color:var(--c-text);outline:none;transition:border .15s}
 input:focus,select:focus{border-color:var(--c-primary)}
-/* Buttons */
+/* ============ Buttons ============ */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 16px;
   border:none;border-radius:var(--radius);font-size:13px;font-weight:600;cursor:pointer;
   transition:all .15s;white-space:nowrap}
@@ -38,18 +80,15 @@ input:focus,select:focus{border-color:var(--c-primary)}
 .btn-ghost{background:transparent;color:var(--c-muted);border:1px solid var(--c-border)}
 .btn-ghost:hover{background:var(--c-bg)}
 .btn-danger{background:var(--c-danger);color:#fff}
+.btn-danger:hover{filter:brightness(1.1)}
 .btn-sm{padding:5px 10px;font-size:12px}
 .btn:disabled{opacity:.5;cursor:not-allowed}
-/* Tabs */
-.tabs{display:flex;gap:2px;border-bottom:2px solid var(--c-border);margin-bottom:20px;overflow-x:auto}
-.tab{padding:10px 18px;font-size:14px;font-weight:600;color:var(--c-muted);cursor:pointer;
-  border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;white-space:nowrap;user-select:none}
-.tab:hover{color:var(--c-text)}
-.tab.active{color:var(--c-primary);border-bottom-color:var(--c-primary)}
+/* ============ Panels ============ */
 .panel{display:none}.panel.active{display:block}
-/* Cards */
+.page-sub{color:var(--c-muted);font-size:13px;margin:-8px 0 16px}
+/* ============ Cards ============ */
 .card{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius);
-  padding:16px;margin-bottom:16px;box-shadow:var(--shadow)}
+  padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
 .card h3{font-size:15px;margin-bottom:12px}
 /* Grid helpers */
 .row{display:flex;gap:10px;margin-bottom:10px}.row>*{flex:1}
@@ -62,40 +101,48 @@ input:focus,select:focus{border-color:var(--c-primary)}
 .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
 .badge-running{background:#dfe6fd;color:#3b5bdb}.badge-completed{background:#d3f9d8;color:#2b8a3e}
 .badge-failed{background:#ffe3e3;color:#c92a2a}.badge-queued{background:#fff3bf;color:#e67700}
-.badge-single{background:#e3fafc;color:#1098ad}
+.badge-on{background:#d3f9d8;color:#2b8a3e}.badge-off{background:#f1f3f5;color:#868e96}
 /* Jobs list */
 .job-item{border:1px solid var(--c-border);border-radius:var(--radius);padding:12px;margin-bottom:8px;background:#fafafa}
 .job-header{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .job-filename{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .job-stats{display:flex;gap:16px;font-size:12px;color:var(--c-muted);margin-top:6px;flex-wrap:wrap}
 .job-stats span{display:flex;align-items:center;gap:4px}
-/* File explorer */
+/* ============ File explorer ============ */
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .toolbar .search{max-width:240px}
-.breadcrumbs{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--c-muted);margin-bottom:12px;flex-wrap:wrap}
-.breadcrumbs a{color:var(--c-info);cursor:pointer;text-decoration:none}
-.breadcrumbs a:hover{text-decoration:underline}
+.breadcrumb-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.breadcrumbs{display:flex;align-items:center;gap:2px;font-size:13px;color:var(--c-muted);flex-wrap:wrap}
+.breadcrumbs a{color:var(--c-info);cursor:pointer;text-decoration:none;padding:2px 4px;border-radius:4px}
+.breadcrumbs a:hover{background:var(--c-primary-h);text-decoration:none}
+.breadcrumbs .crumb-sep{color:var(--c-border);margin:0 2px}
+.item-count{font-size:12px;color:var(--c-muted);white-space:nowrap}
+.selection-bar{display:none;align-items:center;gap:10px;background:var(--c-primary-h);border:1px solid var(--c-primary);
+  border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:13px;font-weight:600;color:var(--c-primary)}
+.selection-bar.show{display:flex}
 .file-table{width:100%;border-collapse:collapse;font-size:13px}
-.file-table th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--c-border);font-size:12px;
+.file-table th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--c-border);font-size:11px;
   color:var(--c-muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap}
 .file-table th:hover{color:var(--c-text)}
 .file-table td{padding:8px 10px;border-bottom:1px solid #f0f0f0;vertical-align:middle}
 .file-table tr:hover td{background:var(--c-primary-h)}
-.file-table .fname{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-table .fname{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .file-table .actions{white-space:nowrap}
-.act{cursor:pointer;background:none;border:none;font-size:15px;padding:2px 5px;opacity:.7;transition:opacity .1s}
-.act:hover{opacity:1}
-.file-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.act{cursor:pointer;background:none;border:none;font-size:15px;padding:2px 5px;opacity:.7;transition:opacity .1s;border-radius:4px}
+.act:hover{opacity:1;background:var(--c-bg)}
+.file-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .file-card{border:1px solid var(--c-border);border-radius:var(--radius);padding:12px;text-align:center;
   cursor:pointer;transition:all .15s;background:#fff;position:relative}
 .file-card:hover{border-color:var(--c-primary);box-shadow:var(--shadow)}
-.file-card .icon{font-size:32px;margin-bottom:6px}
+.file-card .icon{font-size:34px;margin-bottom:6px;height:64px;display:flex;align-items:center;justify-content:center}
+.file-card .thumb{width:100%;height:64px;object-fit:cover;border-radius:6px;margin-bottom:6px;background:var(--c-bg)}
 .file-card .name{font-size:12px;word-break:break-all;line-height:1.3}
 .file-card .size{font-size:11px;color:var(--c-muted);margin-top:4px}
 .file-card input[type=checkbox]{position:absolute;top:6px;left:6px}
 .folder-row{cursor:pointer;font-weight:600}
 .folder-row:hover td{background:var(--c-primary-h)!important}
-.empty-state{text-align:center;padding:40px;color:var(--c-muted);font-size:14px}
+.empty-state{text-align:center;padding:48px 20px;color:var(--c-muted);font-size:13px}
+.empty-state .big{font-size:36px;margin-bottom:8px}
 /* Dropzone */
 .dropzone{border:2px dashed var(--c-border);border-radius:var(--radius);padding:40px;text-align:center;
   color:var(--c-muted);cursor:pointer;transition:all .2s;margin-bottom:12px}
@@ -110,132 +157,288 @@ input:focus,select:focus{border-color:var(--c-primary)}
 .share-item{display:flex;align-items:center;gap:12px;padding:10px;border:1px solid var(--c-border);
   border-radius:var(--radius);margin-bottom:6px;font-size:13px;flex-wrap:wrap}
 .share-item .sf{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:120px}
-/* Toast */
+/* ============ Admin panel ============ */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:16px}
+.stat-card{background:var(--c-card);border:1px solid var(--c-border);border-radius:var(--radius);
+  padding:16px;box-shadow:var(--shadow)}
+.stat-label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--c-muted);font-weight:700;margin-bottom:6px}
+.stat-value{font-size:20px;font-weight:700;margin-bottom:4px}
+.stat-sub{font-size:12px;color:var(--c-muted);margin-bottom:10px}
+.field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:6px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;font-weight:600;color:var(--c-muted);margin-bottom:4px}
+.field .hint{font-size:11px;color:var(--c-muted);margin-top:4px}
+.toggle-list{display:flex;flex-direction:column;gap:4px;margin-top:6px;border-top:1px solid var(--c-border);padding-top:14px}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 4px}
+.toggle-row .toggle-text{display:flex;flex-direction:column;gap:2px}
+.toggle-row .toggle-title{font-size:13px;font-weight:600}
+.toggle-row .toggle-desc{font-size:12px;color:var(--c-muted)}
+.switch{position:relative;display:inline-block;width:40px;height:22px;flex:0 0 auto}
+.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch .slider{position:absolute;inset:0;background:#cbd5e1;transition:.2s;border-radius:22px;cursor:pointer}
+.switch .slider::before{content:"";position:absolute;height:16px;width:16px;left:3px;top:3px;background:#fff;transition:.2s;border-radius:50%}
+.switch input:checked + .slider{background:var(--c-primary)}
+.switch input:checked + .slider::before{transform:translateX(18px)}
+.maintenance-banner{display:none;align-items:center;gap:10px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;
+  border-radius:var(--radius);padding:10px 16px;margin-bottom:16px;font-size:13px;font-weight:600}
+.maintenance-banner.show{display:flex}
+/* ============ Toast ============ */
 .toast-area{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:360px}
 .toast{padding:10px 16px;border-radius:var(--radius);font-size:13px;font-weight:500;color:#fff;
   box-shadow:var(--shadow-lg);animation:tslide .3s ease;display:flex;align-items:center;gap:8px}
 .toast-success{background:var(--c-success)}.toast-error{background:var(--c-danger)}.toast-info{background:var(--c-info)}
 @keyframes tslide{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
-/* Dialog */
-dialog{border:none;border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:24px;width:420px;max-width:92vw;margin:auto}
+/* ============ Dialog ============ */
+dialog{border:none;border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:24px;width:440px;max-width:92vw;margin:auto}
 dialog:modal{max-width:100%;position:fixed;left:0%;top:0%;transform:translate(0%,0%)}
-dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
 dialog h3{margin-bottom:16px}
 dialog .field{margin-bottom:12px}
-dialog .field label{display:block;font-size:12px;font-weight:600;color:var(--c-muted);margin-bottom:4px}
-dialog .btns{display:flex;gap:8px;margin-top:18px}
-/* Responsive */
+dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
+#dlgPreview{width:min(820px,94vw)}
+.preview-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+.preview-head h3{margin-bottom:2px;word-break:break-all}
+.preview-meta{font-size:12px;color:var(--c-muted)}
+.preview-body{max-height:65vh;overflow:auto;border-radius:8px}
+.preview-image-wrap{display:flex;align-items:center;justify-content:center;background:repeating-conic-gradient(#f1f3f5 0% 25%,#fff 0% 50%) 50% / 20px 20px;
+  border-radius:8px;min-height:120px;opacity:0;transition:opacity .2s}
+.preview-image-wrap.loaded{opacity:1}
+.preview-image{max-width:100%;max-height:60vh;display:block;border-radius:6px}
+.preview-media{width:100%;max-height:60vh;border-radius:8px;background:#000}
+.preview-audio-wrap{display:flex;flex-direction:column;align-items:center;gap:16px;padding:30px}
+.preview-audio-wrap .icon{font-size:48px}
+.preview-audio{width:100%}
+.preview-pdf{width:100%;height:65vh;border:1px solid var(--c-border);border-radius:8px}
+.preview-text-toolbar{display:flex;justify-content:flex-end;margin-bottom:6px}
+.preview-text{text-align:left;padding:14px;background:#f8fafc;border:1px solid var(--c-border);white-space:pre-wrap;
+  word-break:break-word;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  max-height:56vh;overflow:auto;border-radius:8px;line-height:1.5}
+.preview-generic{padding:30px 10px;text-align:center}
+.preview-generic .icon{font-size:52px;margin-bottom:10px}
+.preview-generic .fname{font-weight:700;word-break:break-all}
+.preview-generic .fsize{color:var(--c-muted);margin-top:2px}
+.preview-generic .fnote{color:#94a3b8;font-size:12px;margin-top:8px}
+.preview-loading,.preview-error{padding:40px;text-align:center;color:var(--c-muted)}
+/* ============ Responsive ============ */
 @media(max-width:600px){
-  .header{flex-direction:column;align-items:flex-start}
-  .auth-box input{width:100%}
   .row{flex-direction:column}
   .toolbar{flex-direction:column;align-items:stretch}
   .toolbar .search{max-width:none}
+  .stat-grid{grid-template-columns:1fr}
 }
 </style>
 </head>
 <body>
-<div class="app">
-  <!-- Header -->
-  <div class="header">
-    <h1>☁️ R2 <span>Drive</span></h1>
-    <div class="auth-box">
-      <div class="auth-dot" id="authDot"></div>
-      <input type="password" id="apiKey" placeholder="API Key" autocomplete="off">
+<div class="shell" id="shell">
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-icon">☁️</span>
+      <div class="brand-text">
+        <div class="brand-name" id="brandName">R2 Drive</div>
+        <div class="brand-sub">File Manager</div>
+      </div>
     </div>
-  </div>
-
-  <!-- Tabs -->
-  <div class="tabs" id="tabsBar">
-    <div class="tab active" data-tab="downloads">⬇ Downloads</div>
-    <div class="tab" data-tab="upload">⬆ Upload</div>
-    <div class="tab" data-tab="files">📁 Files</div>
-    <div class="tab" data-tab="shares">🔗 Shares</div>
-  </div>
-
-  <!-- Downloads Panel -->
-  <div class="panel active" id="p-downloads">
-    <div class="card">
-      <h3>New Remote Download</h3>
-      <div class="row">
-        <input type="text" id="dlUrl" placeholder="Source URL (https://...)">
+    <nav class="nav" id="tabsBar">
+      <div class="nav-item active" data-tab="downloads" data-title="Downloads"><span class="nav-icon">⬇️</span>Downloads<span class="nav-badge" id="jobsBadge" hidden>0</span></div>
+      <div class="nav-item" data-tab="upload" data-title="Upload"><span class="nav-icon">⬆️</span>Upload</div>
+      <div class="nav-item" data-tab="files" data-title="Files"><span class="nav-icon">📁</span>Files</div>
+      <div class="nav-item" data-tab="shares" data-title="Shares"><span class="nav-icon">🔗</span>Shares</div>
+      <div class="nav-divider"></div>
+      <div class="nav-item" data-tab="admin" data-title="Admin"><span class="nav-icon">⚙️</span>Admin</div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="auth-row">
+        <div class="auth-dot" id="authDot"></div>
+        <input type="password" id="apiKey" placeholder="API Key" autocomplete="off">
       </div>
-      <div class="row">
-        <input type="text" id="dlPrefix" placeholder="Folder path (optional, e.g. downloads/)">
-        <button class="btn btn-ghost btn-sm" onclick="DL.setFromFM()" title="Use current folder">📁</button>
+      <div class="version-row" id="versionRow" onclick="SYS.checkUpdate(true)" title="Click to check for updates">
+        <span id="versionBadge">v…</span>
+        <span id="updateBadge" class="update-badge" hidden></span>
       </div>
-      <div class="row">
-        <input type="text" id="dlName" placeholder="Save as filename (e.g. video.mp4)">
-        <div style="flex:0 0 auto;display:flex;align-items:end">
-          <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
-            <input type="checkbox" id="dlForce"> Overwrite
-          </label>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" onclick="toggleSidebar()">☰</button>
+      <div class="topbar-title" id="topbarTitle">Downloads</div>
+    </header>
+
+    <div class="content">
+      <div class="maintenance-banner" id="maintenanceBanner">🛠️ Maintenance mode is active — public access and WebDAV are temporarily blocked.</div>
+
+      <!-- Downloads Panel -->
+      <div class="panel active" id="p-downloads">
+        <div class="card">
+          <h3>New Remote Download</h3>
+          <div class="row">
+            <input type="text" id="dlUrl" placeholder="Source URL (https://...)">
+          </div>
+          <div class="row">
+            <input type="text" id="dlPrefix" placeholder="Folder path (optional, e.g. downloads/)">
+            <button class="btn btn-ghost btn-sm" onclick="DL.setFromFM()" title="Use current folder">📁</button>
+          </div>
+          <div class="row">
+            <input type="text" id="dlName" placeholder="Save as filename (e.g. video.mp4)">
+            <div style="flex:0 0 auto;display:flex;align-items:end">
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
+                <input type="checkbox" id="dlForce"> Overwrite
+              </label>
+            </div>
+          </div>
+          <button class="btn btn-primary" style="width:100%" onclick="DL.start()" id="dlStartBtn">Start Download</button>
+        </div>
+        <div id="jobsList">
+          <div class="empty-state" id="jobsEmpty">No active downloads</div>
         </div>
       </div>
-      <button class="btn btn-primary" style="width:100%" onclick="DL.start()" id="dlStartBtn">Start Download</button>
-    </div>
-    <div id="jobsList">
-      <div class="empty-state" id="jobsEmpty">No active downloads</div>
-    </div>
-  </div>
 
-  <!-- Upload Panel -->
-  <div class="panel" id="p-upload">
-    <div class="card">
-      <h3>Upload Files</h3>
-      <div class="row">
-        <input type="text" id="uploadPrefix" placeholder="Folder path (optional, e.g. photos/)">
-        <button class="btn btn-ghost btn-sm" onclick="UL.setFromFM()" title="Use current folder">📁</button>
-      </div>
-      <div class="row">
-        <input type="text" id="uploadFilename" placeholder="Filename (optional - uses original if empty)">
-        <div style="flex:0 0 auto;display:flex;align-items:end">
-          <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
-            <input type="checkbox" id="uploadMkdir" checked> Create folder
-          </label>
+      <!-- Upload Panel -->
+      <div class="panel" id="p-upload">
+        <div class="card">
+          <h3>Upload Files</h3>
+          <div class="row">
+            <input type="text" id="uploadPrefix" placeholder="Folder path (optional, e.g. photos/)">
+            <button class="btn btn-ghost btn-sm" onclick="UL.setFromFM()" title="Use current folder">📁</button>
+          </div>
+          <div class="row">
+            <input type="text" id="uploadFilename" placeholder="Filename (optional - uses original if empty)">
+            <div style="flex:0 0 auto;display:flex;align-items:end">
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap">
+                <input type="checkbox" id="uploadMkdir" checked> Create folder
+              </label>
+            </div>
+          </div>
+          <div class="dropzone" id="dropzone">
+            <div style="font-size:36px">📂</div>
+            <p><strong>Drop files here</strong> or click to browse</p>
+            <p style="font-size:12px" id="uploadLimitNote">Multiple files supported</p>
+            <input type="file" id="fileInput" multiple hidden>
+          </div>
+          <div class="upload-queue" id="uploadQueue"></div>
         </div>
       </div>
-      <div class="dropzone" id="dropzone">
-        <div style="font-size:36px">📂</div>
-        <p><strong>Drop files here</strong> or click to browse</p>
-        <p style="font-size:12px">Multiple files supported</p>
-        <input type="file" id="fileInput" multiple hidden>
+
+      <!-- Files Panel -->
+      <div class="panel" id="p-files">
+        <div class="toolbar">
+          <input type="text" class="search" id="fileSearch" placeholder="🔍  Search files...">
+          <select id="fileSort" style="width:auto;flex:0 0 auto">
+            <option value="name-asc">Name ↑</option>
+            <option value="name-desc">Name ↓</option>
+            <option value="size-desc">Size ↓</option>
+            <option value="size-asc">Size ↑</option>
+            <option value="date-desc">Newest</option>
+            <option value="date-asc">Oldest</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="viewToggle" onclick="FM.toggleView()">☰ List</button>
+          <button class="btn btn-ghost btn-sm" onclick="FM.promptMkdir()">+ Folder</button>
+          <button class="btn btn-ghost btn-sm" onclick="FM.load()" style="margin-left:auto">↻ Refresh</button>
+        </div>
+        <div class="breadcrumb-row">
+          <div class="breadcrumbs" id="breadcrumbs"></div>
+          <div class="item-count" id="itemCount"></div>
+        </div>
+        <div class="selection-bar" id="selectionBar">
+          <span id="selectionCount">0 selected</span>
+          <button class="btn btn-ghost btn-sm" onclick="FM.clearSelection()">Clear</button>
+          <button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="FM.bulkDelete()">Delete Selected</button>
+        </div>
+        <div id="filesContainer"></div>
+        <div style="text-align:center;margin-top:10px">
+          <button class="btn btn-ghost btn-sm" id="loadMoreBtn" style="display:none" onclick="FM.loadMore()">Load More…</button>
+        </div>
       </div>
-      <div class="upload-queue" id="uploadQueue"></div>
-    </div>
-  </div>
 
-  <!-- Files Panel -->
-  <div class="panel" id="p-files">
-    <div class="toolbar">
-      <input type="text" class="search" id="fileSearch" placeholder="🔍  Search files...">
-      <select id="fileSort" style="width:auto;flex:0 0 auto">
-        <option value="name-asc">Name ↑</option>
-        <option value="name-desc">Name ↓</option>
-        <option value="size-desc">Size ↓</option>
-        <option value="size-asc">Size ↑</option>
-        <option value="date-desc">Newest</option>
-        <option value="date-asc">Oldest</option>
-      </select>
-      <button class="btn btn-ghost btn-sm" id="viewToggle" onclick="FM.toggleView()">☰ List</button>
-      <button class="btn btn-ghost btn-sm" onclick="FM.promptMkdir()">+ Folder</button>
-      <button class="btn btn-danger btn-sm" id="bulkDelBtn" style="display:none" onclick="FM.bulkDelete()">Delete Selected</button>
-      <button class="btn btn-ghost btn-sm" onclick="FM.load()" style="margin-left:auto">↻</button>
-    </div>
-    <div class="breadcrumbs" id="breadcrumbs"></div>
-    <div id="filesContainer"></div>
-    <div style="text-align:center;margin-top:10px">
-      <button class="btn btn-ghost btn-sm" id="loadMoreBtn" style="display:none" onclick="FM.loadMore()">Load More…</button>
-    </div>
-  </div>
+      <!-- Shares Panel -->
+      <div class="panel" id="p-shares">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3>Share Links</h3>
+          <button class="btn btn-ghost btn-sm" onclick="SH.load()">↻ Refresh</button>
+        </div>
+        <div id="sharesList"><div class="empty-state">Loading...</div></div>
+      </div>
 
-  <!-- Shares Panel -->
-  <div class="panel" id="p-shares">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h3>Share Links</h3>
-      <button class="btn btn-ghost btn-sm" onclick="SH.load()">↻</button>
+      <!-- Admin Panel -->
+      <div class="panel" id="p-admin">
+        <div class="page-sub">Runtime configuration for this deployment — changes take effect immediately, no redeploy needed.</div>
+
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-label">Version</div>
+            <div class="stat-value" id="adminVersion">—</div>
+            <div class="stat-sub" id="adminUpdateStatus">Checking for updates…</div>
+            <button class="btn btn-ghost btn-sm" onclick="SYS.checkUpdate(true)">Check for updates</button>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">WebDAV Access</div>
+            <div class="stat-value"><span class="badge" id="adminWebdavStatus">—</span></div>
+            <div class="stat-sub">Basic-Auth protected access at the site root (e.g. for Windows/macOS/rclone clients)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Maintenance Mode</div>
+            <div class="stat-value"><span class="badge" id="adminMaintenanceStatus">—</span></div>
+            <div class="stat-sub">Blocks public share links + WebDAV; this Admin panel stays reachable</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>System Settings</h3>
+          <div class="field-grid">
+            <div class="field">
+              <label>Site title</label>
+              <input type="text" id="setSiteTitle" placeholder="R2 Drive">
+              <div class="hint">Shown in the sidebar brand area</div>
+            </div>
+            <div class="field">
+              <label>Max upload size (MB)</label>
+              <input type="number" id="setMaxUpload" min="1" max="5000">
+              <div class="hint">Applies to WebDAV PUT uploads</div>
+            </div>
+            <div class="field">
+              <label>Rate limit (requests / min / IP)</label>
+              <input type="number" id="setRateLimit" min="1" max="10000">
+              <div class="hint">Applies to WebDAV requests</div>
+            </div>
+            <div class="field">
+              <label>Default share expiry (hours)</label>
+              <input type="number" id="setShareHours" min="1" max="999">
+              <div class="hint">Pre-fills new share link expiry</div>
+            </div>
+          </div>
+
+          <div class="toggle-list">
+            <div class="toggle-row">
+              <div class="toggle-text">
+                <span class="toggle-title">Enable WebDAV access</span>
+                <span class="toggle-desc">Turn off to fully disable the WebDAV endpoint</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="setWebdavEnabled"><span class="slider"></span></label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-text">
+                <span class="toggle-title">Allow public share links</span>
+                <span class="toggle-desc">Turn off to block all existing and new /s/ links</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="setAllowShares"><span class="slider"></span></label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-text">
+                <span class="toggle-title">Maintenance mode</span>
+                <span class="toggle-desc">Temporarily blocks WebDAV + share links; the file manager API stays available to admins</span>
+              </div>
+              <label class="switch"><input type="checkbox" id="setMaintenance"><span class="slider"></span></label>
+            </div>
+          </div>
+
+          <div class="btns">
+            <button class="btn btn-ghost" onclick="ADMIN.reset()">Reset to Defaults</button>
+            <button class="btn btn-primary" onclick="ADMIN.save()" id="adminSaveBtn">Save Settings</button>
+          </div>
+        </div>
+      </div>
     </div>
-    <div id="sharesList"><div class="empty-state">Loading...</div></div>
   </div>
 </div>
 
@@ -294,11 +497,17 @@ dialog .btns{display:flex;gap:8px;margin-top:18px}
 </dialog>
 
 <dialog id="dlgPreview">
-  <h3>Preview</h3>
   <input type="hidden" id="previewFile">
-  <div id="previewContent" style="text-align:center;max-height:60vh;overflow:auto"></div>
+  <div class="preview-head">
+    <div>
+      <h3 id="previewTitle">Preview</h3>
+      <div class="preview-meta" id="previewMeta"></div>
+    </div>
+  </div>
+  <div class="preview-body" id="previewContent"></div>
   <div class="btns">
     <button class="btn btn-ghost" onclick="dlgPreview.close()">Close</button>
+    <button class="btn btn-ghost" onclick="window.open($('#previewFile').value ? FM.getUrl($('#previewFile').value) : '', '_blank')">Open in New Tab</button>
     <button class="btn btn-primary" onclick="FM.download($('#previewFile').value)">Download</button>
   </div>
 </dialog>
@@ -329,6 +538,16 @@ function fmtDate(d) {
   if (!d) return '—';
   return new Date(d).toLocaleString(undefined, { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
 }
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+const IMG_EXTS = ['jpg','jpeg','png','gif','webp','svg','bmp','avif'];
+const VIDEO_EXTS = ['mp4','webm','mov','mkv','m4v'];
+const AUDIO_EXTS = ['mp3','wav','ogg','flac','aac','m4a'];
+const PDF_EXTS = ['pdf'];
+const TEXT_EXTS = ['txt','md','json','xml','html','htm','css','js','log','csv','yml','yaml','ts','py','sh','ini','conf'];
 
 function fileIcon(name) {
   const ext = (name.split('.').pop() || '').toLowerCase();
@@ -362,17 +581,23 @@ const API = {
 };
 
 // ===========================================================================
-// Tabs
+// Sidebar / Tabs
 // ===========================================================================
+function toggleSidebar() { $('#shell').classList.toggle('sidebar-open'); }
+function closeSidebar() { $('#shell').classList.remove('sidebar-open'); }
+
 $('#tabsBar').addEventListener('click', e => {
-  const tab = e.target.closest('.tab');
-  if (!tab) return;
-  $$('.tab').forEach(t => t.classList.remove('active'));
+  const item = e.target.closest('.nav-item');
+  if (!item) return;
+  $$('.nav-item').forEach(t => t.classList.remove('active'));
   $$('.panel').forEach(p => p.classList.remove('active'));
-  tab.classList.add('active');
-  $(`#p-${tab.dataset.tab}`).classList.add('active');
-  if (tab.dataset.tab === 'files') FM.load();
-  if (tab.dataset.tab === 'shares') SH.load();
+  item.classList.add('active');
+  $(`#p-${item.dataset.tab}`).classList.add('active');
+  $('#topbarTitle').textContent = item.dataset.title || item.dataset.tab;
+  closeSidebar();
+  if (item.dataset.tab === 'files') FM.load();
+  if (item.dataset.tab === 'shares') SH.load();
+  if (item.dataset.tab === 'admin') ADMIN.load();
 });
 
 // ===========================================================================
@@ -387,6 +612,108 @@ function updateAuthDot() { $('#authDot').classList.toggle('ok', !!$('#apiKey').v
 updateAuthDot();
 
 // ===========================================================================
+// SYSTEM INFO / VERSION CHECK (SYS)
+// ===========================================================================
+const SYS = {
+  info: null,
+  UPDATE_CACHE_KEY: 'r2_update_check',
+  UPDATE_CACHE_TTL: 6 * 60 * 60 * 1000, // re-check upstream at most every 6h unless forced
+
+  async loadInfo() {
+    try {
+      const res = await fetch('/api/system/info');
+      if (!res.ok) return null;
+      this.info = await res.json();
+      this.renderInfo();
+      return this.info;
+    } catch {
+      return null;
+    }
+  },
+
+  renderInfo() {
+    if (!this.info) return;
+    $('#versionBadge').textContent = 'v' + this.info.version;
+    $('#brandName').textContent = this.info.siteTitle || 'R2 Drive';
+    document.title = this.info.siteTitle || 'R2 Drive';
+    $('#adminVersion').textContent = 'v' + this.info.version;
+    const webdavBadge = $('#adminWebdavStatus');
+    webdavBadge.textContent = this.info.webdavEnabled ? 'Enabled' : 'Disabled';
+    webdavBadge.className = 'badge ' + (this.info.webdavEnabled ? 'badge-on' : 'badge-off');
+    const maintBadge = $('#adminMaintenanceStatus');
+    maintBadge.textContent = this.info.maintenanceMode ? 'Active' : 'Off';
+    maintBadge.className = 'badge ' + (this.info.maintenanceMode ? 'badge-failed' : 'badge-on');
+    $('#maintenanceBanner').classList.toggle('show', !!this.info.maintenanceMode);
+  },
+
+  isNewerVersion(a, b) {
+    const pa = String(a).split('.').map(n => parseInt(n) || 0);
+    const pb = String(b).split('.').map(n => parseInt(n) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i] || 0, y = pb[i] || 0;
+      if (x > y) return true;
+      if (x < y) return false;
+    }
+    return false;
+  },
+
+  async checkUpdate(force = false) {
+    if (!this.info) await this.loadInfo();
+    if (!this.info) return;
+
+    if (!force) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(this.UPDATE_CACHE_KEY) || 'null');
+        if (cached && cached.current === this.info.version && Date.now() - cached.ts < this.UPDATE_CACHE_TTL) {
+          this.applyUpdateStatus(cached.result);
+          return;
+        }
+      } catch {}
+    }
+
+    const badge = $('#updateBadge');
+    badge.hidden = false; badge.textContent = '…'; badge.className = 'update-badge checking';
+    $('#adminUpdateStatus').textContent = 'Checking for updates…';
+
+    try {
+      // raw.githubusercontent.com serves CORS-enabled raw file content, so this
+      // works directly from the browser without a backend proxy.
+      const url = `https://raw.githubusercontent.com/${this.info.repoOwner}/${this.info.repoName}/main/package.json?_=${Date.now()}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('fetch failed: ' + res.status);
+      const pkg = await res.json();
+      const latest = pkg.version;
+      const result = { latest, upToDate: !this.isNewerVersion(latest, this.info.version) };
+      localStorage.setItem(this.UPDATE_CACHE_KEY, JSON.stringify({ ts: Date.now(), current: this.info.version, result }));
+      this.applyUpdateStatus(result);
+    } catch (e) {
+      this.applyUpdateStatus(null);
+    }
+  },
+
+  applyUpdateStatus(result) {
+    const badge = $('#updateBadge');
+    const adminStatus = $('#adminUpdateStatus');
+    if (!result) {
+      badge.hidden = true;
+      adminStatus.textContent = 'Update check unavailable (offline or blocked)';
+      return;
+    }
+    if (result.upToDate) {
+      badge.hidden = true;
+      adminStatus.textContent = 'Up to date';
+    } else {
+      badge.hidden = false;
+      badge.textContent = 'Update: v' + result.latest;
+      badge.className = 'update-badge available';
+      adminStatus.textContent = 'Update available: v' + result.latest;
+    }
+  }
+};
+
+SYS.loadInfo().then(() => SYS.checkUpdate(false));
+
+// ===========================================================================
 // DOWNLOAD MANAGER (DL)
 // ===========================================================================
 const DL = {
@@ -397,7 +724,10 @@ const DL = {
   render() {
     const c = $('#jobsList');
     const active = this.jobs.filter(j => j.status !== 'removed');
-    if (!active.length) { c.innerHTML = '<div class="empty-state">No downloads yet</div>'; return; }
+    const running = active.filter(j => j.status === 'downloading').length;
+    const badge = $('#jobsBadge');
+    if (running) { badge.hidden = false; badge.textContent = running; } else { badge.hidden = true; }
+    if (!active.length) { c.innerHTML = '<div class="empty-state"><div class="big">⬇️</div>No downloads yet</div>'; return; }
     c.innerHTML = active.map((j,i) => {
       const pct = j.totalParts ? Math.round((j.completedParts||0)/j.totalParts*100) : (j.status==='completed'?100:j.status==='failed'?100:0);
       const barClass = j.status==='completed'?'done':j.status==='failed'||j.status==='aborted'?'fail':'';
@@ -489,8 +819,6 @@ const DL = {
           this.saveJobs(); this.render();
           toast(job.filename + ' downloaded!', 'success');
         } else if (s.status === 'failed') {
-                console.log("failed for: ", s.error);
-
           clearInterval(poll);
           job.status = 'failed';
           this.saveJobs(); this.render();
@@ -510,7 +838,7 @@ const DL = {
         if (job.status !== 'downloading') return;
         const range = ranges[idx++];
         let retries = 0;
-        while (retries < 3) { 
+        while (retries < 3) {
           try {
             const r = await API.call('/api/jobs/chunk', {
               method:'POST',
@@ -534,11 +862,11 @@ const DL = {
               toast('Chunk failed: ' + (r.error || 'Unknown error'), 'error');
               return;
             }
-          } catch(e) { 
-          
+          } catch(e) {
+            retries++;
             if (retries >= 3) { job.status='failed'; this.saveJobs(); this.render(); toast('Chunk failed: '+e.message,'error'); return; }
             await new Promise(r=>setTimeout(r,1000*retries));
-          } 
+          }
         }
       }
     };
@@ -697,8 +1025,8 @@ const FM = {
     this.files = [];
     this.folders = [];
     this.renderBreadcrumbs();
+    this.updateSelectionBar();
     $('#filesContainer').innerHTML = '<div class="empty-state">Loading…</div>';
-    $('#bulkDelBtn').style.display = 'none';
     try {
       const search = $('#fileSearch').value.trim();
       const prefix = this.path ? (this.path.startsWith('/') ? this.path : '/' + this.path) : '/';
@@ -713,6 +1041,7 @@ const FM = {
       this.cursor = data.cursor;
       this.sort();
       this.render();
+      this.renderBreadcrumbs();
       $('#loadMoreBtn').style.display = data.truncated ? '' : 'none';
     } catch(e) {
       $('#filesContainer').innerHTML = '<div class="empty-state">Error: '+e.message+'</div>';
@@ -731,6 +1060,7 @@ const FM = {
       this.cursor = data.cursor;
       this.sort();
       this.render();
+      this.renderBreadcrumbs();
       $('#loadMoreBtn').style.display = data.truncated ? '' : 'none';
     } catch(e) { toast(e.message,'error'); }
   },
@@ -756,26 +1086,31 @@ const FM = {
     const parts = this.path.split('/').filter(Boolean);
     let html = `<a onclick="FM.navigate('')">🏠 Root</a>`;
     let acc = '';
-    parts.forEach((p,i) => {
+    parts.forEach((p) => {
       acc += p + '/';
-      html += ` / <a onclick="FM.navigate('${acc}')">${p}</a>`;
+      html += `<span class="crumb-sep">/</span><a onclick="FM.navigate('${acc}')">${escapeHtml(p)}</a>`;
     });
     $('#breadcrumbs').innerHTML = html;
+    const nF = this.folders.length, nFile = this.files.length;
+    $('#itemCount').textContent = (nF || nFile) ? `${nF} folder${nF!==1?'s':''} · ${nFile} file${nFile!==1?'s':''}` : '';
   },
 
   renderList() {
     if (!this.folders.length && !this.files.length) {
-      $('#filesContainer').innerHTML = '<div class="empty-state">Empty folder</div>';
+      $('#filesContainer').innerHTML = '<div class="empty-state"><div class="big">📭</div>Empty folder</div>';
       return;
     }
-    const prefix = this.path;
+    // Every stored key carries a leading "/" (even root-level ones), but
+    // this.path is '' at the root rather than '/' — fall back to '/' so the
+    // prefix strip below removes that leading slash instead of being a no-op.
+    const prefix = this.path || '/';
     let rows = '';
     // Folders
     this.folders.forEach(f => {
       const name = f.replace(prefix,'').replace(/\/$/,'');
       rows += `<tr class="folder-row" ondblclick="FM.navigate('${f}')">
         <td><input type="checkbox" disabled></td>
-        <td class="fname">📁 ${name}</td><td>—</td><td>—</td>
+        <td class="fname" onclick="FM.navigate('${f}')">📁 ${escapeHtml(name)}</td><td>—</td><td>—</td>
         <td class="actions"><button class="act" onclick="FM.navigate('${f}')" title="Open">📂</button>
         <button class="act" onclick="FM.deleteFolder('${f}')" title="Delete" style="color:var(--c-danger)">✕</button></td></tr>`;
     });
@@ -785,7 +1120,7 @@ const FM = {
       const sel = this.selected.has(f.key);
       rows += `<tr>
         <td><input type="checkbox" ${sel?'checked':''} onchange="FM.toggleSelect('${f.key}',this.checked)"></td>
-        <td class="fname" title="${f.key}">${fileIcon(name)} ${name}</td>
+        <td class="fname" title="${escapeHtml(f.key)}" onclick="FM.preview('${f.key}')">${fileIcon(name)} ${escapeHtml(name)}</td>
         <td>${fmtSize(f.size)}</td>
         <td>${fmtDate(f.uploaded)}</td>
         <td class="actions">
@@ -806,23 +1141,30 @@ const FM = {
 
   renderGrid() {
     if (!this.folders.length && !this.files.length) {
-      $('#filesContainer').innerHTML = '<div class="empty-state">Empty folder</div>';
+      $('#filesContainer').innerHTML = '<div class="empty-state"><div class="big">📭</div>Empty folder</div>';
       return;
     }
-    const prefix = this.path;
+    // Every stored key carries a leading "/" (even root-level ones), but
+    // this.path is '' at the root rather than '/' — fall back to '/' so the
+    // prefix strip below removes that leading slash instead of being a no-op.
+    const prefix = this.path || '/';
     let cards = '';
     this.folders.forEach(f => {
       const name = f.replace(prefix,'').replace(/\/$/,'');
       cards += `<div class="file-card" ondblclick="FM.navigate('${f}')">
-        <div class="icon">📁</div><div class="name">${name}</div></div>`;
+        <div class="icon">📁</div><div class="name">${escapeHtml(name)}</div></div>`;
     });
     this.files.forEach(f => {
       const name = f.key.replace(prefix,'');
       const sel = this.selected.has(f.key);
-      cards += `<div class="file-card" ondblclick="FM.download('${f.key}')">
+      const ext = (name.split('.').pop()||'').toLowerCase();
+      const thumb = IMG_EXTS.includes(ext)
+        ? `<img class="thumb" src="${this.getUrl(f.key)}" loading="lazy" alt="" onerror="this.outerHTML='<div class=&quot;icon&quot;>${fileIcon(name)}</div>'">`
+        : `<div class="icon">${fileIcon(name)}</div>`;
+      cards += `<div class="file-card" ondblclick="FM.preview('${f.key}')">
         <input type="checkbox" ${sel?'checked':''} onchange="event.stopPropagation();FM.toggleSelect('${f.key}',this.checked)">
-        <div class="icon">${fileIcon(name)}</div>
-        <div class="name" title="${f.key}">${name}</div>
+        ${thumb}
+        <div class="name" title="${escapeHtml(f.key)}">${escapeHtml(name)}</div>
         <div class="size">${fmtSize(f.size)}</div></div>`;
     });
     $('#filesContainer').innerHTML = `<div class="file-grid">${cards}</div>`;
@@ -832,12 +1174,22 @@ const FM = {
   toggleView() { this.view = this.view==='list'?'grid':'list'; localStorage.setItem('r2_view',this.view); this.render(); },
   toggleSelect(key, checked) {
     if(checked) this.selected.add(key); else this.selected.delete(key);
-    $('#bulkDelBtn').style.display = this.selected.size?'':'none';
+    this.updateSelectionBar();
   },
   selectAll(checked) {
     this.files.forEach(f => { if(checked) this.selected.add(f.key); else this.selected.delete(f.key); });
-    $('#bulkDelBtn').style.display = this.selected.size?'':'none';
+    this.updateSelectionBar();
     this.render();
+  },
+  clearSelection() {
+    this.selected.clear();
+    this.updateSelectionBar();
+    this.render();
+  },
+  updateSelectionBar() {
+    const n = this.selected.size;
+    $('#selectionBar').classList.toggle('show', n > 0);
+    $('#selectionCount').textContent = n + ' selected';
   },
 
   getUrl(key) {
@@ -847,6 +1199,7 @@ const FM = {
   },
 
   download(key) {
+    if (!key) return;
     const url = this.getUrl(key);
     window.open(url, '_blank');
   },
@@ -885,6 +1238,10 @@ const FM = {
     $('#shareCode').value = '';
     $('#shareResult').style.display = 'none';
     $('#shareGenBtn').style.display = '';
+    if (SYS.info?.defaultShareHours) {
+      const opt = Array.from($('#shareHours').options).find(o => o.value === String(SYS.info.defaultShareHours));
+      if (opt) $('#shareHours').value = opt.value;
+    }
     dlgShare.showModal();
   },
 
@@ -949,37 +1306,59 @@ const FM = {
   },
 
   async preview(key) {
+    if (!key) return;
     $('#previewFile').value = key;
-    const ext = key.split('.').pop().toLowerCase();
-    const imgExts = ['jpg','jpeg','png','gif','webp','svg','bmp'];
-    const textExts = ['txt','md','json','xml','html','css','js','log','csv'];
-    
+    const name = key.split('/').pop();
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    const file = this.files.find(f => f.key === key);
+
+    $('#previewTitle').textContent = name;
+    $('#previewMeta').textContent = [fmtSize(file?.size || 0), file?.uploaded ? fmtDate(file.uploaded) : null].filter(Boolean).join(' · ');
+
     const c = $('#previewContent');
-    
-    if (imgExts.includes(ext)) {
-      const url = this.getUrl(key);
-      c.innerHTML = `<img src="${url}" style="max-width:100%;max-height:50vh">`;
-    } else if (textExts.includes(ext)) {
-      c.innerHTML = '<div style="text-align:left;padding:10px;background:#f5f5f5;white-space:pre-wrap;font-size:12px">Loading...</div>';
+    c.innerHTML = '<div class="preview-loading">Loading…</div>';
+    dlgPreview.showModal();
+
+    const url = this.getUrl(key);
+
+    if (IMG_EXTS.includes(ext)) {
+      c.innerHTML = `<div class="preview-image-wrap">
+        <img class="preview-image" src="${url}" onload="this.closest('.preview-image-wrap').classList.add('loaded')" onerror="this.closest('.preview-image-wrap').innerHTML='<div class=&quot;preview-error&quot;>Failed to load image</div>'">
+      </div>`;
+    } else if (VIDEO_EXTS.includes(ext)) {
+      c.innerHTML = `<video class="preview-media" src="${url}" controls autoplay></video>`;
+    } else if (AUDIO_EXTS.includes(ext)) {
+      c.innerHTML = `<div class="preview-audio-wrap"><div class="icon">🎵</div><audio class="preview-audio" src="${url}" controls autoplay></audio></div>`;
+    } else if (PDF_EXTS.includes(ext)) {
+      c.innerHTML = `<iframe class="preview-pdf" src="${url}"></iframe>`;
+    } else if (TEXT_EXTS.includes(ext)) {
       try {
-        const url = this.getUrl(key);
         const res = await fetch(url);
-        const text = await res.text();
-        c.innerHTML = `<div style="text-align:left;padding:10px;background:#f5f5f5;white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto">${text.slice(0,50000)}</div>`;
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        let text = await res.text();
+        if (ext === 'json') { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch {} }
+        const limit = 150000;
+        const truncated = text.length > limit;
+        const display = truncated ? text.slice(0, limit) + '\n\n… truncated …' : text;
+        c.innerHTML = `<div class="preview-text-toolbar"><button class="btn btn-ghost btn-sm" onclick="FM.copyPreviewText()">📋 Copy</button></div>
+          <pre class="preview-text" id="previewTextBlock">${escapeHtml(display)}</pre>`;
       } catch(e) {
-        c.innerHTML = '<div style="color:red">Failed to load</div>';
+        c.innerHTML = '<div class="preview-error">Failed to load file: ' + escapeHtml(e.message) + '</div>';
       }
     } else {
-      const size = this.files.find(f => f.key === key)?.size || 0;
-      c.innerHTML = `<div style="padding:20px">
-        <div style="font-size:48px;text-align:center">${fileIcon(key)}</div>
-        <div style="margin-top:10px;font-weight:600">${key.split('/').pop()}</div>
-        <div style="color:#666">${fmtSize(size)}</div>
-        <div style="color:#999;font-size:12px;margin-top:5px">Preview not available for this file type</div>
+      c.innerHTML = `<div class="preview-generic">
+        <div class="icon">${fileIcon(name)}</div>
+        <div class="fname">${escapeHtml(name)}</div>
+        <div class="fsize">${fmtSize(file?.size || 0)}</div>
+        <div class="fnote">No inline preview available for this file type</div>
       </div>`;
     }
-    
-    dlgPreview.showModal();
+  },
+
+  copyPreviewText() {
+    const el = $('#previewTextBlock');
+    if (!el) return;
+    navigator.clipboard.writeText(el.textContent).then(() => toast('Copied to clipboard', 'success'));
   },
 
   async deleteFile(key) {
@@ -1013,6 +1392,7 @@ const FM = {
       await API.call('/api/files/delete', { method:'POST', body:{ keys }});
       toast(keys.length+' deleted','success');
       this.selected.clear();
+      this.updateSelectionBar();
       this.load();
     } catch(e) { toast(e.message,'error'); }
   },
@@ -1041,13 +1421,13 @@ const SH = {
     try {
       const data = await API.call('/api/shares');
       const shares = data.shares || [];
-      if (!shares.length) { $('#sharesList').innerHTML = '<div class="empty-state">No share links</div>'; return; }
+      if (!shares.length) { $('#sharesList').innerHTML = '<div class="empty-state"><div class="big">🔗</div>No share links</div>'; return; }
       $('#sharesList').innerHTML = shares.map(s => {
         const exp = s.expires ? (s.expired ? '🔴 Expired' : '🟢 '+fmtDate(s.expires)) : '🟢 Never';
         const fullUrl = location.origin + s.url;
         return `<div class="share-item">
-          <div class="sf" title="${s.filename}">${s.filename}</div>
-          <span style="font-size:12px;color:var(--c-muted)">Code: <strong>${s.code}</strong></span>
+          <div class="sf" title="${escapeHtml(s.filename)}">${escapeHtml(s.filename)}</div>
+          <span style="font-size:12px;color:var(--c-muted)">Code: <strong>${escapeHtml(s.code)}</strong></span>
           <span style="font-size:12px">${exp}</span>
           <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${fullUrl}');toast('Copied','success')">Copy</button>
           <button class="btn btn-danger btn-sm" onclick="SH.revoke('${s.token}')">Revoke</button>
@@ -1090,6 +1470,63 @@ const SH = {
 };
 
 // ===========================================================================
+// ADMIN PANEL (ADMIN)
+// ===========================================================================
+const ADMIN = {
+  async load() {
+    try {
+      const data = await API.call('/api/admin/settings');
+      this.fill(data);
+    } catch(e) {
+      toast('Failed to load settings: '+e.message,'error');
+    }
+    SYS.loadInfo();
+  },
+
+  fill(s) {
+    $('#setSiteTitle').value = s.siteTitle || '';
+    $('#setMaxUpload').value = s.maxUploadSizeMB;
+    $('#setRateLimit').value = s.rateLimitPerMinute;
+    $('#setShareHours').value = s.defaultShareHours;
+    $('#setWebdavEnabled').checked = !!s.webdavEnabled;
+    $('#setAllowShares').checked = !!s.allowPublicShares;
+    $('#setMaintenance').checked = !!s.maintenanceMode;
+    $('#uploadLimitNote').textContent = `Multiple files supported · WebDAV max ${s.maxUploadSizeMB}MB per file`;
+  },
+
+  async save() {
+    const btn = $('#adminSaveBtn');
+    btn.disabled = true;
+    const body = {
+      siteTitle: $('#setSiteTitle').value.trim(),
+      maxUploadSizeMB: parseInt($('#setMaxUpload').value, 10),
+      rateLimitPerMinute: parseInt($('#setRateLimit').value, 10),
+      defaultShareHours: parseInt($('#setShareHours').value, 10),
+      webdavEnabled: $('#setWebdavEnabled').checked,
+      allowPublicShares: $('#setAllowShares').checked,
+      maintenanceMode: $('#setMaintenance').checked,
+    };
+    try {
+      const data = await API.call('/api/admin/settings', { method:'POST', body });
+      this.fill(data);
+      toast('Settings saved','success');
+      SYS.loadInfo();
+    } catch(e) { toast(e.message,'error'); }
+    btn.disabled = false;
+  },
+
+  async reset() {
+    if (!confirm('Reset all system settings to defaults?')) return;
+    try {
+      const data = await API.call('/api/admin/settings/reset', { method:'POST' });
+      this.fill(data);
+      toast('Settings reset to defaults','success');
+      SYS.loadInfo();
+    } catch(e) { toast(e.message,'error'); }
+  }
+};
+
+// ===========================================================================
 // Dialog refs
 // ===========================================================================
 const dlgRename = $('#dlgRename');
@@ -1099,6 +1536,10 @@ const dlgCopy = $('#dlgCopy');
 const dlgPreview = $('#dlgPreview');
 // Close on backdrop click
 [dlgRename, dlgShare, dlgMove, dlgCopy, dlgPreview].forEach(d => d.addEventListener('click', e => { if(e.target===d) d.close(); }));
+// Stop media playback when the preview dialog closes
+dlgPreview.addEventListener('close', () => {
+  $('#previewContent').querySelectorAll('video,audio').forEach(el => { try { el.pause(); } catch {} });
+});
 
 // Auto-fill filename from URL
 $('#dlUrl').addEventListener('input', () => {

@@ -14,10 +14,80 @@ async function sha256(input) {
   return hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-// 安全相关配置
+// 安全相关配置（管理员未在系统设置中覆盖时使用的默认值）
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1分钟窗口
 const MAX_REQUESTS_PER_WINDOW = 60; // 每分钟最多60个请求
 const MAX_UPLOAD_SIZE = 10 * 1024 * 1024; // 最大上传大小10MB
+
+// ============================================================================
+// SYSTEM SETTINGS
+// ============================================================================
+// Admin-configurable runtime settings, persisted as a single JSON object in
+// the same WEBDAV_STORAGE bucket. This is separate from Wrangler secrets
+// (AUTH_KEY, WEBDAV_USERNAME/PASSWORD): those still gate access at the
+// platform level, while these knobs are meant to be changed from the app's
+// own Admin panel without a redeploy.
+// Deliberately no leading "/": every user-facing key in this app is stored
+// with a leading slash (see normalizePath), and both the WebDAV directory
+// listing and the /api/files listing treat a leading "/" as "just another
+// path segment" — a dot-prefixed leading segment only gets filtered out of
+// listings by name (".tokens/", ".jobs/", …), which requires no leading
+// slash. Keeping this key in the same no-slash "hidden namespace" as those
+// existing internal keys keeps it out of the file manager UI.
+const SETTINGS_KEY = ".settings/system.json";
+
+export const DEFAULT_SETTINGS = {
+  siteTitle: "R2 Drive",
+  maxUploadSizeMB: MAX_UPLOAD_SIZE / (1024 * 1024),
+  rateLimitPerMinute: MAX_REQUESTS_PER_WINDOW,
+  defaultShareHours: 24,
+  allowPublicShares: true,
+  maintenanceMode: false,
+  webdavEnabled: true,
+};
+
+export async function getSettings(env) {
+  ensureR2CompatibleStorage(env);
+  try {
+    const obj = await env.WEBDAV_STORAGE.get(SETTINGS_KEY);
+    if (!obj) return { ...DEFAULT_SETTINGS };
+    const stored = await obj.json();
+    return { ...DEFAULT_SETTINGS, ...stored };
+  } catch (error) {
+    console.error("读取系统设置失败，使用默认值:", error);
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+// 仅接受已知字段，并做基本的类型/范围校验，防止管理面板提交的畸形数据破坏运行时配置
+export function sanitizeSettingsPatch(body) {
+  const out = {};
+  if (!body || typeof body !== "object") return out;
+  if (typeof body.siteTitle === "string" && body.siteTitle.trim()) {
+    out.siteTitle = body.siteTitle.trim().slice(0, 60);
+  }
+  if (Number.isFinite(body.maxUploadSizeMB)) {
+    out.maxUploadSizeMB = Math.min(Math.max(1, body.maxUploadSizeMB), 5000);
+  }
+  if (Number.isFinite(body.rateLimitPerMinute)) {
+    out.rateLimitPerMinute = Math.min(Math.max(1, body.rateLimitPerMinute), 10000);
+  }
+  if (Number.isFinite(body.defaultShareHours)) {
+    out.defaultShareHours = Math.min(Math.max(1, body.defaultShareHours), 999);
+  }
+  for (const key of ["allowPublicShares", "maintenanceMode", "webdavEnabled"]) {
+    if (typeof body[key] === "boolean") out[key] = body[key];
+  }
+  return out;
+}
+
+export async function saveSettings(env, patch) {
+  ensureR2CompatibleStorage(env);
+  const current = await getSettings(env);
+  const next = { ...current, ...sanitizeSettingsPatch(patch) };
+  await env.WEBDAV_STORAGE.put(SETTINGS_KEY, JSON.stringify(next));
+  return next;
+}
 
 function createR2CompatibleStorage(storage) {
   if (!storage || storage.__webdavCompat) return storage;
@@ -114,16 +184,16 @@ export function joinStoragePath(base, path) {
   return joinPath(base, path);
 }
 
-// 请求速率限制实现
-async function applyRateLimit(request, env) {
+// 请求速率限制实现（每分钟最大请求数可通过管理面板的系统设置覆盖）
+async function applyRateLimit(request, env, maxRequestsPerWindow = MAX_REQUESTS_PER_WINDOW) {
   try {
     // 使用内存缓存而不是KV存储来减少KV读取
     const cache = applyRateLimit.cache || (applyRateLimit.cache = new Map());
     const now = Date.now();
-    
+
     // 获取客户端IP
     const clientIP = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
-    
+
     // 清理过期的记录
     const cutoff = now - RATE_LIMIT_WINDOW;
     for (const [ip, data] of cache.entries()) {
@@ -131,13 +201,13 @@ async function applyRateLimit(request, env) {
         cache.delete(ip);
       }
     }
-    
+
     // 检查并更新请求计数
     if (cache.has(clientIP)) {
       const data = cache.get(clientIP);
-      
+
       // 检查是否超出限制
-      if (data.count >= MAX_REQUESTS_PER_WINDOW) {
+      if (data.count >= maxRequestsPerWindow) {
         return new Response('请求过于频繁，请稍后再试', {
           status: 429,
           headers: {
@@ -146,7 +216,7 @@ async function applyRateLimit(request, env) {
           }
         });
       }
-      
+
       // 更新计数
       data.count++;
     } else {
@@ -174,12 +244,31 @@ export async function fetch_webdav(request, env, ctx) {
     try {
       ensureR2CompatibleStorage(env);
 
-      // 应用请求速率限制
-      const rateLimited = await applyRateLimit(request, env);
+      const settings = await getSettings(env);
+
+      // 维护模式会暂时阻断所有对外访问（WebDAV、公开分享链接），
+      // 但保留受 API Key 保护的管理接口，以便管理员随时关闭维护模式
+      if (settings.maintenanceMode) {
+        return new Response('服务当前处于维护模式', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '300' }
+        });
+      }
+
+      // 管理员可在系统设置中整体关闭 WebDAV 服务
+      if (!settings.webdavEnabled) {
+        return new Response('WebDAV 服务已被管理员禁用', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '3600' }
+        });
+      }
+
+      // 应用请求速率限制（限额可在系统设置中调整）
+      const rateLimited = await applyRateLimit(request, env, settings.rateLimitPerMinute);
       if (rateLimited) {
         return rateLimited;
       }
-      
+
       // 安全地解析URL
       let url;
       try {
@@ -290,9 +379,10 @@ export async function fetch_webdav(request, env, ctx) {
               status: getResponse.status
             }));
           case 'PUT':
-            // 检查上传大小限制
+            // 检查上传大小限制（可在系统设置中调整）
             const contentLength = request.headers.get('Content-Length');
-            if (contentLength && parseInt(contentLength) > MAX_UPLOAD_SIZE) {
+            const maxUploadBytes = (settings.maxUploadSizeMB || DEFAULT_SETTINGS.maxUploadSizeMB) * 1024 * 1024;
+            if (contentLength && parseInt(contentLength) > maxUploadBytes) {
               return addCsrfToken(new Response('上传文件过大', {
                 status: 413,
                 headers: {
