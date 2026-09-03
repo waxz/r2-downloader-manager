@@ -2432,9 +2432,10 @@ async function handleDelete(env, path) {
         return new Response('目录不为空', { status: 409 });
       }
       
-      // 删除目录标记
+      // 删除目录标记（"_dir" 后缀标记 + 与 REST API 共用的嵌套空目录标记）
       const dirPath = `${normalizedPath}_dir`;
       await env.WEBDAV_STORAGE.delete(dirPath);
+      await env.WEBDAV_STORAGE.delete(`${normalizedPath}/.emptydir`);
     } else {
       // 删除文件内容和元数据
       await env.WEBDAV_STORAGE.delete(normalizedPath);
@@ -2780,16 +2781,24 @@ async function handleMkcol(env, path) {
       }
     }
     
-    // 使用简化的目录存储方式，只创建一个目录标记
+    // 使用简化的目录存储方式，创建一个目录标记
     const now = new Date().toISOString();
     const dirPath = `${normalizedPath}_dir`;
-    
+
     await env.WEBDAV_STORAGE.put(dirPath, JSON.stringify({
       type: 'directory',
       createdAt: now,
       modifiedAt: now
     }));
-    
+
+    // 同时写入一个嵌套的空目录标记（与 /api/files/mkdir 使用的约定一致）。
+    // /api/files 的文件管理器完全依赖 R2 原生的前缀+分隔符分组来发现文件夹，
+    // 不识别上面的 "_dir" 后缀标记；如果没有这个真实的嵌套键，刚创建的空目录
+    // 在文件管理器里会不可见，直到目录中出现真正的文件为止。
+    await env.WEBDAV_STORAGE.put(`${normalizedPath}/.emptydir`, new Uint8Array(0), {
+      customMetadata: { type: 'folder' }
+    });
+
     // 更新父目录修改时间
     await updateDirectoryTimestamp(env, parentPath);
     
@@ -2974,7 +2983,20 @@ async function getResourceInfo(env, path) {
     if (metaInfo && metaInfo.type === 'file') {
       return metaInfo;
     }
-    
+
+    // 兼容通过 REST API（/api/files/mkdir）创建、但还没有 "_dir" 标记的空目录
+    // ——例如本次修复之前就已创建的目录，它们只带有嵌套的 ".emptydir" 标记
+    if (path !== '/') {
+      const emptyDirMarker = await env.WEBDAV_STORAGE.get(`${path}/.emptydir`);
+      if (emptyDirMarker) {
+        return {
+          type: 'directory',
+          createdAt: new Date().toISOString(),
+          modifiedAt: new Date().toISOString()
+        };
+      }
+    }
+
     return null;
   } catch (error) {
     console.error('获取资源信息失败:', error);
@@ -3046,12 +3068,35 @@ async function listDirectoryChildren(env, path) {
         });
       }
     });
-    
+
+    // 兼容通过 REST API（/api/files/mkdir）创建、但还没有 "_dir" 标记的空目录
+    // ——例如本次修复之前就已创建的目录，它们只带有 ".emptydir" 标记
+    const EMPTYDIR_SUFFIX = '/.emptydir';
+    for (const key of listResult.keys) {
+      if (!key.name.endsWith(EMPTYDIR_SUFFIX)) continue;
+      const relativePath = key.name.substring(prefix.length);
+      const dirName = relativePath.slice(0, -EMPTYDIR_SUFFIX.length);
+      if (!dirName || dirName.includes('/') || processedChildren.has(dirName)) continue;
+      processedChildren.add(dirName);
+      children.push({
+        name: dirName,
+        type: 'directory',
+        modifiedAt: new Date().toISOString(),
+        size: 0,
+        contentType: 'httpd/unix-directory'
+      });
+    }
+
     // 收集所有需要处理的文件信息
     const filesToProcess = [];
     for (const key of listResult.keys) {
-      // 过滤掉session数据、元数据、目录和已处理的项
-      if (key.name.endsWith('_meta') || key.name.endsWith('_dir') || key.name.startsWith('session_')) continue;
+      // 过滤掉session数据、元数据、目录标记和空目录标记（.emptydir 本身不是用户文件）
+      if (
+        key.name.endsWith('_meta') ||
+        key.name.endsWith('_dir') ||
+        key.name.startsWith('session_') ||
+        key.name.endsWith('.emptydir')
+      ) continue;
 
       const relativePath = key.name.substring(prefix.length);
       // 相对路径为空或仍包含 '/' 说明它不是当前目录的直接子项（是更深层级的文件）
