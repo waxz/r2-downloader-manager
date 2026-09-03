@@ -54,6 +54,7 @@ import {
   timingSafeEqual,
   normalizeWebdavRoot,
 } from "./webdav.js";
+import { fetch_mcp } from "./mcp.js";
 
 // ============================================================================
 // VERSION / SYSTEM INFO
@@ -105,6 +106,125 @@ async function ensureWebDAVDirMarkers(env, dirPath) {
       modifiedAt: now,
     }),
   );
+}
+
+// Thrown by the storage-operation helpers below to carry the HTTP status
+// their caller should respond with (404 for "not found", 409 for "already
+// exists", etc.) through a single generic try/catch, rather than every
+// caller having to know each helper's specific failure modes. Both the
+// REST routes in fetch_api and the MCP tool handlers in mcp.js catch these.
+export class ApiError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Shared by the REST /api/files/delete route and the MCP delete_file/
+// delete_directory tools. `keys` are deleted along with their "_meta"
+// sidecar; `prefixes` are folders, deleted recursively (however deep) the
+// same way WebDAV's own recursive COPY/MOVE walk a subtree, since a
+// caller's one-level view of a folder isn't enough to enumerate everything
+// under it.
+export async function deleteFilesAndFolders(env, { keys = [], prefixes = [] } = {}) {
+  const allKeys = new Set();
+  for (const k of keys) {
+    allKeys.add(k);
+    allKeys.add(`${k}_meta`);
+  }
+  for (const rawPrefix of prefixes) {
+    const normalizedPrefix = normalizeStoragePath(rawPrefix).replace(/\/$/, "");
+    if (!normalizedPrefix || normalizedPrefix === "/") continue;
+    allKeys.add(`${normalizedPrefix}_dir`);
+    allKeys.add(`${normalizedPrefix}/.emptydir`);
+    const listPrefix = `${normalizedPrefix}/`;
+    let cursor;
+    do {
+      const listed = await env.WEBDAV_STORAGE.list({
+        prefix: listPrefix,
+        cursor,
+        limit: 1000,
+      });
+      for (const object of listed.objects || []) allKeys.add(object.key);
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+  const finalKeys = Array.from(allKeys);
+  if (finalKeys.length) await env.WEBDAV_STORAGE.delete(finalKeys);
+  return { requested: keys.length + prefixes.length };
+}
+
+// Shared by the REST /api/files/mkdir route and the MCP create_directory
+// tool: writes both the ".emptydir" marker (used by /api/files' listing)
+// and the WebDAV "_dir" markers (see ensureWebDAVDirMarkers), so a folder
+// created either way is visible everywhere.
+export async function createDirectory(env, path) {
+  const folderPath = normalizeStoragePath(path);
+  const folderKey =
+    folderPath === "/" ? "/" : folderPath.endsWith("/") ? folderPath : folderPath + "/";
+  const markerKey =
+    folderKey === "/" ? "/.emptydir" : joinStoragePath(folderKey, ".emptydir");
+  await env.WEBDAV_STORAGE.put(markerKey, new Uint8Array(0), {
+    customMetadata: { type: "folder" },
+  });
+  await ensureWebDAVDirMarkers(env, folderPath);
+  return { created: folderKey };
+}
+
+// Shared by the REST /api/upload route and the MCP write_file tool.
+export async function writeFile(env, path, bytes, contentType = "application/octet-stream") {
+  const filename = normalizeStoragePath(path);
+  await env.WEBDAV_STORAGE.put(filename, bytes, {
+    httpMetadata: { contentType, contentLength: bytes.length },
+    customMetadata: { source: "upload", timestamp: Date.now().toString() },
+  });
+  const now = new Date().toISOString();
+  await env.WEBDAV_STORAGE.put(
+    `${filename}_meta`,
+    JSON.stringify({ type: "file", size: bytes.length, modifiedAt: now, contentType }),
+  );
+  await ensureWebDAVDirMarkers(env, getParentPath(filename));
+  return { status: "uploaded", filename, size: bytes.length };
+}
+
+// Shared by the REST /api/files/move and /api/files/copy routes and the MCP
+// move_file/copy_file tools. Operates on a single file (not a folder tree —
+// same scope the REST API has always had).
+export async function relocateFile(env, source, destination, { remove }) {
+  const src = normalizeStoragePath(source);
+  const dest = normalizeStoragePath(destination);
+  const srcObj = await env.WEBDAV_STORAGE.get(src);
+  if (!srcObj) throw new ApiError("Source not found", 404);
+  const destKey = dest.endsWith("/") ? dest + src.split("/").pop() : dest;
+  if (await env.WEBDAV_STORAGE.head(destKey))
+    throw new ApiError("Destination already exists", 409);
+  const srcBody = await srcObj.arrayBuffer();
+  await env.WEBDAV_STORAGE.put(destKey, srcBody, {
+    httpMetadata: srcObj.httpMetadata,
+    customMetadata: srcObj.customMetadata,
+  });
+  const srcMeta = await env.WEBDAV_STORAGE.get(`${src}_meta`);
+  if (srcMeta) {
+    await env.WEBDAV_STORAGE.put(`${destKey}_meta`, await srcMeta.text());
+    if (remove) await env.WEBDAV_STORAGE.delete(`${src}_meta`);
+  }
+  if (remove) await env.WEBDAV_STORAGE.delete(src);
+  return { status: remove ? "moved" : "copied", source: src, destination: destKey };
+}
+
+// Shared by the REST /api/files/info route and the MCP get_file_info tool.
+export async function getFileInfo(env, key) {
+  const normalized = normalizeStoragePath(key);
+  if (!normalized || normalized === "/") throw new ApiError("Missing key");
+  const head = await env.WEBDAV_STORAGE.head(normalized);
+  if (!head) throw new ApiError("Not found", 404);
+  return {
+    key: head.key,
+    size: head.size,
+    uploaded: head.uploaded,
+    httpMetadata: head.httpMetadata,
+    customMetadata: head.customMetadata,
+  };
 }
 
 async function fetch_api(request, env) {
@@ -194,17 +314,8 @@ async function fetch_api(request, env) {
       return handleListFolders(env);
 
     if (path === "/api/files/info" && method === "GET") {
-      const key = normalizeStoragePath(url.searchParams.get("key") || "");
-      if (!key || key === "/") return jsonError("Missing key");
-      const head = await env.WEBDAV_STORAGE.head(key);
-      if (!head) return jsonError("Not found", 404);
-      return jsonOk({
-        key: head.key,
-        size: head.size,
-        uploaded: head.uploaded,
-        httpMetadata: head.httpMetadata,
-        customMetadata: head.customMetadata,
-      });
+      const info = await getFileInfo(env, url.searchParams.get("key") || "");
+      return jsonOk(info);
     }
 
     if (path === "/api/files/delete" && method === "POST") {
@@ -221,42 +332,8 @@ async function fetch_api(request, env) {
           ? [body.prefix]
           : [];
       if (!keys.length && !prefixes.length) return jsonError("No keys");
-
-      const allKeys = new Set();
-      for (const k of keys) {
-        allKeys.add(k);
-        allKeys.add(`${k}_meta`);
-      }
-      // A folder's children aren't necessarily flat: the frontend only knows
-      // about the one level it last listed, so a folder containing
-      // subfolders can't be fully enumerated client-side without walking the
-      // whole tree itself. Instead, the client sends the folder's own
-      // prefix and the server lists (and deletes) everything under it,
-      // however deep, the same way WebDAV's recursive COPY/MOVE do.
-      for (const rawPrefix of prefixes) {
-        const normalizedPrefix = normalizeStoragePath(rawPrefix).replace(/\/$/, "");
-        if (!normalizedPrefix || normalizedPrefix === "/") continue;
-        allKeys.add(`${normalizedPrefix}_dir`);
-        allKeys.add(`${normalizedPrefix}/.emptydir`);
-        const listPrefix = `${normalizedPrefix}/`;
-        let cursor;
-        do {
-          const listed = await env.WEBDAV_STORAGE.list({
-            prefix: listPrefix,
-            cursor,
-            limit: 1000,
-          });
-          for (const object of listed.objects || []) allKeys.add(object.key);
-          cursor = listed.truncated ? listed.cursor : undefined;
-        } while (cursor);
-      }
-
-      const finalKeys = Array.from(allKeys);
-      if (finalKeys.length) await env.WEBDAV_STORAGE.delete(finalKeys);
-      // Reported count is the number of logical items requested (files or
-      // folders), not the expanded R2 key count (which includes sidecar
-      // "_meta"/marker keys the caller never asked about directly).
-      return jsonOk({ deleted: keys.length + prefixes.length });
+      const { requested } = await deleteFilesAndFolders(env, { keys, prefixes });
+      return jsonOk({ deleted: requested });
     }
 
     if (path === "/api/files/rename" && method === "POST") {
@@ -286,76 +363,27 @@ async function fetch_api(request, env) {
       const body = await readBody(request);
       if (!body?.source || !body?.destination)
         return jsonError("Missing source or destination");
-      const source = normalizeStoragePath(body.source);
-      const destination = normalizeStoragePath(body.destination);
-      const src = await env.WEBDAV_STORAGE.get(source);
-      if (!src) return jsonError("Source not found", 404);
-      const destKey = destination.endsWith("/")
-        ? destination + source.split("/").pop()
-        : destination;
-      if (await env.WEBDAV_STORAGE.head(destKey))
-        return jsonError("Destination already exists", 409);
-      const srcBody = await src.arrayBuffer();
-      await env.WEBDAV_STORAGE.put(destKey, srcBody, {
-        httpMetadata: src.httpMetadata,
-        customMetadata: src.customMetadata,
+      const result = await relocateFile(env, body.source, body.destination, {
+        remove: true,
       });
-      const srcMeta = await env.WEBDAV_STORAGE.get(`${source}_meta`);
-      if (srcMeta) {
-        await env.WEBDAV_STORAGE.put(`${destKey}_meta`, await srcMeta.text());
-        await env.WEBDAV_STORAGE.delete(`${source}_meta`);
-      }
-      await env.WEBDAV_STORAGE.delete(source);
-      return jsonOk({ status: "moved", source, destination: destKey });
+      return jsonOk(result);
     }
 
     if (path === "/api/files/copy" && method === "POST") {
       const body = await readBody(request);
       if (!body?.source || !body?.destination)
         return jsonError("Missing source or destination");
-      const source = normalizeStoragePath(body.source);
-      const destination = normalizeStoragePath(body.destination);
-      const src = await env.WEBDAV_STORAGE.get(source);
-      if (!src) return jsonError("Source not found", 404);
-      const destKey = destination.endsWith("/")
-        ? destination + source.split("/").pop()
-        : destination;
-      if (await env.WEBDAV_STORAGE.head(destKey))
-        return jsonError("Destination already exists", 409);
-      const srcBody = await src.arrayBuffer();
-      await env.WEBDAV_STORAGE.put(destKey, srcBody, {
-        httpMetadata: src.httpMetadata,
-        customMetadata: src.customMetadata,
+      const result = await relocateFile(env, body.source, body.destination, {
+        remove: false,
       });
-      const srcMeta = await env.WEBDAV_STORAGE.get(`${source}_meta`);
-      if (srcMeta) {
-        await env.WEBDAV_STORAGE.put(`${destKey}_meta`, await srcMeta.text());
-      }
-      return jsonOk({ status: "copied", source, destination: destKey });
+      return jsonOk(result);
     }
 
     if (path === "/api/files/mkdir" && method === "POST") {
       const body = await readBody(request);
       if (!body?.path) return jsonError("Missing path");
-      const folderPath = normalizeStoragePath(body.path);
-      const folderKey =
-        folderPath === "/"
-          ? "/"
-          : folderPath.endsWith("/")
-            ? folderPath
-            : folderPath + "/";
-      const markerKey =
-        folderKey === "/"
-          ? "/.emptydir"
-          : joinStoragePath(folderKey, ".emptydir");
-      await env.WEBDAV_STORAGE.put(markerKey, new Uint8Array(0), {
-        customMetadata: { type: "folder" },
-      });
-      // Also write the "_dir" markers WebDAV needs (see ensureWebDAVDirMarkers)
-      // so a folder created from the file manager is visible to WebDAV
-      // clients too, not just the ".emptydir" marker used by /api/files.
-      await ensureWebDAVDirMarkers(env, folderPath);
-      return jsonOk({ created: folderKey });
+      const result = await createDirectory(env, body.path);
+      return jsonOk(result);
     }
 
     if (path === "/api/upload" && (method === "PUT" || method === "POST")) {
@@ -367,26 +395,13 @@ async function fetch_api(request, env) {
         request.headers.get("Content-Type") || "application/octet-stream";
 
       const arrayBuffer = await request.arrayBuffer();
-      const body = new Uint8Array(arrayBuffer);
-
-      await env.WEBDAV_STORAGE.put(filename, body, {
-        httpMetadata: { contentType, contentLength: body.length },
-        customMetadata: { source: "upload", timestamp: Date.now().toString() },
-      });
-
-      const now = new Date().toISOString();
-      await env.WEBDAV_STORAGE.put(
-        `${filename}_meta`,
-        JSON.stringify({
-          type: "file",
-          size: body.length,
-          modifiedAt: now,
-          contentType,
-        }),
+      const result = await writeFile(
+        env,
+        filename,
+        new Uint8Array(arrayBuffer),
+        contentType,
       );
-      await ensureWebDAVDirMarkers(env, getParentPath(filename));
-
-      return jsonOk({ status: "uploaded", filename, size: body.length });
+      return jsonOk(result);
     }
 
     if (path.startsWith("/get/")) {
@@ -473,6 +488,11 @@ async function fetch_api(request, env) {
 
     return jsonError("Not Found: " + path, 404);
   } catch (e) {
+    // ApiError (thrown by the shared storage helpers — getFileInfo,
+    // relocateFile, etc.) carries the specific status this failure should
+    // map to (404 "not found", 409 "already exists"...); anything else is
+    // an unexpected failure, reported as a generic 500.
+    if (e instanceof ApiError) return jsonError(e.message, e.status);
     return jsonError("Internal Error: " + e.message, 500);
   }
 }
@@ -499,6 +519,14 @@ export default {
       // folder name in the file tree.
       if (path.startsWith("/api") || path.startsWith("/get/"))
         return fetch_api(request, env);
+
+      // MCP (Model Context Protocol) server: lets an MCP client (e.g. an
+      // AI agent) list/read/write/delete/move files in this bucket as
+      // tools, over the same API key auth /api/* uses. Routed explicitly
+      // for the same reason "/get/" is above — otherwise it falls through
+      // to WebDAV, which would require Basic Auth and treat "mcp" as a
+      // literal folder name.
+      if (path === "/mcp") return fetch_mcp(request, env);
 
       if (
         (path === "/" || path === "/index.html") &&
@@ -548,7 +576,7 @@ async function handlePublicShare(url, env) {
   return new Response(obj.body, { headers: getDownloadHeaders(obj, filename) });
 }
 
-async function handleListFiles(url, env) {
+export async function handleListFiles(url, env) {
   const prefix = ensureLeadingSlash(
     decodeRequestValue(url.searchParams.get("prefix") || ""),
   );
@@ -699,7 +727,7 @@ async function handleListFiles(url, env) {
 // marker's own path) rather than from a prefix+delimiter walk — this is the
 // one place the app wants the *whole* tree flattened into one list, not one
 // level at a time.
-async function handleListFolders(env) {
+export async function handleListFolders(env) {
   const folders = new Set();
   let cursor;
   let pages = 0;
