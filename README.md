@@ -80,7 +80,11 @@ new_sqlite_classes = ["DownloadManager"]
     npx wrangler r2 bucket create my-drive-bucket
     ```
 
-2.  **Set the API Key (Recommended):**
+2.  **Set the API Key (Required):**
+
+    Without this, the file manager API (`/api/*`: uploads, downloads,
+    listing, jobs, shares, admin settings) rejects every request — there is
+    no "open" fallback mode.
 
     - Workers
     ```bash

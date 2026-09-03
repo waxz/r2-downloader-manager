@@ -120,14 +120,26 @@ async function fetch_api(request, env) {
     }
 
     // --- Auth gate for everything else ---
+    // Fail closed: if the operator never configured AUTH_KEY/APIKEYSECRET,
+    // this used to skip the check entirely and leave every file/job/share
+    // operation open to anyone who could reach the worker. Instead, treat
+    // "not configured" the same as "wrong key" — deny access — so the
+    // management API is never accidentally exposed unauthenticated. This
+    // mirrors WebDAV's own fail-closed behavior when its credentials aren't
+    // configured (see verifyWebDAVCredentials in webdav.js).
     const authKey = env.AUTH_KEY || env.APIKEYSECRET;
-    if (authKey) {
-      const k = url.searchParams.get("key") || request.headers.get("x-api-key");
-      // Constant-time compare: a plain `!==` short-circuits at the first
-      // mismatched character, which is a timing side-channel an attacker
-      // could use to guess the key one character at a time.
-      if (!k || !(await timingSafeEqual(k, authKey)))
-        return jsonError("Unauthorized", 401);
+    // Prefer the header: some routes (e.g. /api/files/info) have their own
+    // "key" query parameter for an unrelated purpose (the storage key being
+    // looked up), which would otherwise collide with the auth key. The
+    // query-string form stays supported as a fallback for cases that can't
+    // set a custom header, like a plain /get/<file>?key=... link opened
+    // directly in a browser tab.
+    const providedKey = request.headers.get("x-api-key") || url.searchParams.get("key");
+    // Constant-time compare: a plain `!==` short-circuits at the first
+    // mismatched character, which is a timing side-channel an attacker
+    // could use to guess the key one character at a time.
+    if (!authKey || !providedKey || !(await timingSafeEqual(providedKey, authKey))) {
+      return jsonError("Unauthorized", 401);
     }
 
     // --- Admin: system settings ---

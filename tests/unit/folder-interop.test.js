@@ -14,7 +14,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../../src/_worker.js";
 import { fetch_webdav } from "../../src/webdav.js";
-import { createMockEnv, basicAuthHeader } from "./mockStorage.js";
+import {
+  createMockEnv,
+  basicAuthHeader,
+  authedRequest,
+} from "./mockStorage.js";
 
 const AUTH = basicAuthHeader("demo", "demo");
 function dav(env, path, init = {}) {
@@ -30,7 +34,7 @@ function api(env, path, init = {}) {
   if (init.body && !headers.has("Content-Type"))
     headers.set("Content-Type", "application/json");
   return worker.fetch(
-    new Request(`https://example.com${path}`, { ...init, headers }),
+    authedRequest(env, `https://example.com${path}`, { ...init, headers }),
     env,
   );
 }

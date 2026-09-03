@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker, { DownloadManager } from "../../src/_worker.js";
-import { createMockEnv, createMockDOState } from "./mockStorage.js";
+import {
+  createMockEnv,
+  createMockDOState,
+  authedRequest,
+} from "./mockStorage.js";
 
 function withMockFetch(impl, fn) {
   const original = globalThis.fetch;
@@ -281,7 +285,7 @@ test("full worker: /api/jobs/init -> status routes through the DownloadManager D
     }),
     async () => {
       const initRes = await worker.fetch(
-        new Request("https://example.com/api/jobs/init", {
+        authedRequest(env, "https://example.com/api/jobs/init", {
           method: "POST",
           body: JSON.stringify({
             sourceUrl: "https://src.example/f",
@@ -302,7 +306,7 @@ test("full worker: /api/jobs/init -> status routes through the DownloadManager D
       // runtime this is tracked by ctx.waitUntil(); here we just poll status.
       for (let i = 0; i < 20; i++) {
         const statusRes = await worker.fetch(
-          new Request("https://example.com/api/jobs/status", {
+          authedRequest(env, "https://example.com/api/jobs/status", {
             method: "POST",
             body: JSON.stringify({ jobId: initBody.jobId }),
           }),
@@ -324,7 +328,7 @@ test("/api/jobs/init rejects a missing sourceUrl/filename with 400", async () =>
   const env = createMockEnv();
   env.DOWNLOAD_MANAGER = createMockDurableObjectNamespace(env);
   const res = await worker.fetch(
-    new Request("https://example.com/api/jobs/init", {
+    authedRequest(env, "https://example.com/api/jobs/init", {
       method: "POST",
       body: JSON.stringify({}),
     }),

@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker from "../../src/_worker.js";
-import { createMockEnv } from "./mockStorage.js";
+import { createMockEnv, authedRequest } from "./mockStorage.js";
 
 function api(env, path, init = {}) {
   const headers = new Headers(init.headers || {});
   if (init.body && !headers.has("Content-Type"))
     headers.set("Content-Type", "application/json");
   return worker.fetch(
-    new Request(`https://example.com${path}`, { ...init, headers }),
+    authedRequest(env, `https://example.com${path}`, { ...init, headers }),
     env,
   );
 }
@@ -24,7 +24,7 @@ test("PUT /api/upload then GET /get/:name round-trips content", async () => {
   assert.equal((await put.json()).status, "uploaded");
 
   const get = await worker.fetch(
-    new Request("https://example.com/get/report.txt"),
+    authedRequest(env, "https://example.com/get/report.txt"),
     env,
   );
   assert.equal(get.status, 200);
@@ -73,14 +73,14 @@ test("POST /api/files/rename moves the file and its _meta sidecar", async () => 
   assert.equal(rename.status, 200);
 
   const renamed = await worker.fetch(
-    new Request("https://example.com/get/new.txt"),
+    authedRequest(env, "https://example.com/get/new.txt"),
     env,
   );
   assert.equal(renamed.status, 200);
   assert.equal(await renamed.text(), "content");
 
   const stale = await worker.fetch(
-    new Request("https://example.com/get/old.txt"),
+    authedRequest(env, "https://example.com/get/old.txt"),
     env,
   );
   assert.equal(stale.status, 404);
@@ -100,13 +100,21 @@ test("POST /api/files/move relocates the file and its _meta sidecar", async () =
   assert.equal(move.status, 200);
 
   assert.equal(
-    (await worker.fetch(new Request("https://example.com/get/dest.txt"), env))
-      .status,
+    (
+      await worker.fetch(
+        authedRequest(env, "https://example.com/get/dest.txt"),
+        env,
+      )
+    ).status,
     200,
   );
   assert.equal(
-    (await worker.fetch(new Request("https://example.com/get/src.txt"), env))
-      .status,
+    (
+      await worker.fetch(
+        authedRequest(env, "https://example.com/get/src.txt"),
+        env,
+      )
+    ).status,
     404,
   );
 });
@@ -125,11 +133,11 @@ test("POST /api/files/copy duplicates the file, leaving the source intact", asyn
   assert.equal(copy.status, 200);
 
   const a = await worker.fetch(
-    new Request("https://example.com/get/orig.txt"),
+    authedRequest(env, "https://example.com/get/orig.txt"),
     env,
   );
   const b = await worker.fetch(
-    new Request("https://example.com/get/copy.txt"),
+    authedRequest(env, "https://example.com/get/copy.txt"),
     env,
   );
   assert.equal(await a.text(), "copy content");
@@ -151,8 +159,12 @@ test("POST /api/files/delete removes the file's content and _meta sidecar", asyn
   assert.equal((await del.json()).deleted, 1);
 
   assert.equal(
-    (await worker.fetch(new Request("https://example.com/get/gone.txt"), env))
-      .status,
+    (
+      await worker.fetch(
+        authedRequest(env, "https://example.com/get/gone.txt"),
+        env,
+      )
+    ).status,
     404,
   );
   assert.equal(
@@ -176,7 +188,7 @@ test("POST /api/files/mkdir creates an empty-dir marker", async () => {
 test("unknown API route returns 404", async () => {
   const env = createMockEnv();
   const res = await worker.fetch(
-    new Request("https://example.com/api/does-not-exist"),
+    authedRequest(env, "https://example.com/api/does-not-exist"),
     env,
   );
   assert.equal(res.status, 404);
