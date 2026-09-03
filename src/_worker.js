@@ -187,6 +187,12 @@ async function fetch_api(request, env) {
     if (path === "/api/files" && method === "GET")
       return handleListFiles(url, env);
 
+    // Flat list of every folder path in the bucket, at any depth — powers
+    // the destination-folder dropdown in Download/Upload/Move/Copy so users
+    // pick an existing folder instead of hand-typing one.
+    if (path === "/api/folders" && method === "GET")
+      return handleListFolders(env);
+
     if (path === "/api/files/info" && method === "GET") {
       const key = normalizeStoragePath(url.searchParams.get("key") || "");
       if (!key || key === "/") return jsonError("Missing key");
@@ -686,6 +692,51 @@ async function handleListFiles(url, env) {
     truncated: false,
     cursor: null,
   });
+}
+
+// Every folder path in the bucket, at any depth, derived from the keys
+// themselves (a plain file's ancestor path segments, plus any directory
+// marker's own path) rather than from a prefix+delimiter walk — this is the
+// one place the app wants the *whole* tree flattened into one list, not one
+// level at a time.
+async function handleListFolders(env) {
+  const folders = new Set();
+  let cursor;
+  let pages = 0;
+  do {
+    const listed = await env.WEBDAV_STORAGE.list({ cursor, limit: 1000 });
+    for (const object of listed.objects || []) {
+      const key = object.key;
+      if (
+        key.startsWith(".tokens/") ||
+        key.startsWith(".jobs/") ||
+        key.startsWith(".settings/")
+      )
+        continue;
+      let normalized = normalizeStoragePath(key);
+      if (normalized.endsWith("_meta")) continue;
+      let isDirMarker = false;
+      if (normalized.endsWith("_dir")) {
+        normalized = normalized.slice(0, -"_dir".length);
+        isDirMarker = true;
+      } else if (normalized.endsWith("/.emptydir")) {
+        normalized = normalized.slice(0, -"/.emptydir".length);
+        isDirMarker = true;
+      }
+      const segments = normalized.split("/").filter(Boolean);
+      const dirSegments = isDirMarker ? segments : segments.slice(0, -1);
+      let acc = "";
+      for (const segment of dirSegments) {
+        acc += `/${segment}`;
+        folders.add(acc);
+      }
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+    pages++;
+    // Bound worst-case work for very large buckets; the dropdown this feeds
+    // is a convenience, not a guarantee of completeness at that scale.
+  } while (cursor && pages < 50);
+  return jsonOk({ folders: Array.from(folders).sort() });
 }
 
 async function handleListShares(env) {

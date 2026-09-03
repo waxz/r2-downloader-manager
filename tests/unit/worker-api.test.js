@@ -47,6 +47,31 @@ test("GET /api/files lists uploaded files under the requested prefix", async () 
   assert.ok(data.folders.includes("/folder/"));
 });
 
+test("GET /api/folders returns every folder in the bucket, at any depth", async () => {
+  const env = createMockEnv();
+  // A file nested several levels deep, with no explicit mkdir along the
+  // way — the endpoint must still surface every ancestor folder, since
+  // that's the whole point of the destination-folder dropdown it feeds.
+  await api(env, "/api/upload?filename=/docs/reports/q1.txt", {
+    method: "PUT",
+    body: "q1",
+  });
+  // An empty folder created via mkdir (no files inside it at all).
+  await api(env, "/api/files/mkdir", {
+    method: "POST",
+    body: JSON.stringify({ path: "/empty" }),
+  });
+
+  const res = await api(env, "/api/folders");
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.deepEqual(
+    data.folders,
+    ["/docs", "/docs/reports", "/empty"],
+    "every ancestor folder must be included, sorted, with no duplicates",
+  );
+});
+
 test("GET /api/files/info returns size and metadata for an uploaded file", async () => {
   const env = createMockEnv();
   await api(env, "/api/upload?filename=/info.txt", {

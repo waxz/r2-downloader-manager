@@ -276,7 +276,7 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
             <input type="text" id="dlUrl" placeholder="Source URL (https://...)">
           </div>
           <div class="row">
-            <input type="text" id="dlPrefix" placeholder="Folder path (optional, e.g. downloads/)">
+            <input type="text" id="dlPrefix" list="folderOptions" placeholder="Destination folder — pick or type (optional)">
             <button class="btn btn-ghost btn-sm" onclick="DL.setFromFM()" title="Use current folder">📁</button>
           </div>
           <div class="row">
@@ -299,7 +299,7 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
         <div class="card">
           <h3>Upload Files</h3>
           <div class="row">
-            <input type="text" id="uploadPrefix" placeholder="Folder path (optional, e.g. photos/)">
+            <input type="text" id="uploadPrefix" list="folderOptions" placeholder="Destination folder — pick or type (optional)">
             <button class="btn btn-ghost btn-sm" onclick="UL.setFromFM()" title="Use current folder">📁</button>
           </div>
           <div class="row">
@@ -333,7 +333,7 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
             <option value="date-asc">Oldest</option>
           </select>
           <button class="btn btn-ghost btn-sm" id="viewToggle" onclick="FM.toggleView()">☰ List</button>
-          <button class="btn btn-ghost btn-sm" onclick="FM.promptMkdir()">+ Folder</button>
+          <button class="btn btn-ghost btn-sm" onclick="FM.openMkdir()">+ Folder</button>
           <button class="btn btn-ghost btn-sm" onclick="FM.load()" style="margin-left:auto">↻ Refresh</button>
         </div>
         <div class="breadcrumb-row">
@@ -450,7 +450,23 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
 <!-- Toast container -->
 <div class="toast-area" id="toasts"></div>
 
+<!-- Shared destination-folder suggestions, populated from the bucket's real
+     folder tree (see FolderPicker) and shared by every folder-picking input
+     below via list="folderOptions" — a combobox: pick from the dropdown, or
+     type a new path (e.g. to create one). -->
+<datalist id="folderOptions"></datalist>
+
 <!-- Dialogs -->
+<dialog id="dlgMkdir">
+  <h3>New Folder</h3>
+  <div class="field"><label>Parent folder</label><input type="text" id="mkdirParent" list="folderOptions" placeholder="/ (root)"></div>
+  <div class="field"><label>Folder name</label><input type="text" id="mkdirName" placeholder="e.g. photos"></div>
+  <div class="btns">
+    <button class="btn btn-ghost" onclick="dlgMkdir.close()">Cancel</button>
+    <button class="btn btn-primary" onclick="FM.doMkdir()">Create</button>
+  </div>
+</dialog>
+
 <dialog id="dlgRename">
   <h3>Rename File</h3>
   <div class="field"><label>New Name</label><input type="text" id="renameVal"></div>
@@ -484,7 +500,7 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
 <dialog id="dlgMove">
   <h3>Move File</h3>
   <input type="hidden" id="moveFile">
-  <div class="field"><label>Destination folder</label><input type="text" id="moveDest" placeholder="e.g. /folder/ or /folder/newname.png"></div>
+  <div class="field"><label>Destination folder</label><input type="text" id="moveDest" list="folderOptions" placeholder="e.g. /folder/ or /folder/newname.png"></div>
   <div class="btns">
     <button class="btn btn-ghost" onclick="dlgMove.close()">Cancel</button>
     <button class="btn btn-primary" onclick="FM.doMove()">Move</button>
@@ -494,7 +510,7 @@ dialog .btns{display:flex;gap:8px;margin-top:18px;justify-content:flex-end}
 <dialog id="dlgCopy">
   <h3>Copy File</h3>
   <input type="hidden" id="copyFile">
-  <div class="field"><label>Destination folder</label><input type="text" id="copyDest" placeholder="e.g. /folder/ or /folder/newname.png"></div>
+  <div class="field"><label>Destination folder</label><input type="text" id="copyDest" list="folderOptions" placeholder="e.g. /folder/ or /folder/newname.png"></div>
   <div class="btns">
     <button class="btn btn-ghost" onclick="dlgCopy.close()">Cancel</button>
     <button class="btn btn-primary" onclick="FM.doCopy()">Copy</button>
@@ -603,6 +619,7 @@ $('#tabsBar').addEventListener('click', e => {
   if (item.dataset.tab === 'files') FM.load();
   if (item.dataset.tab === 'shares') SH.load();
   if (item.dataset.tab === 'admin') ADMIN.load();
+  if (item.dataset.tab === 'downloads' || item.dataset.tab === 'upload') FolderPicker.populate();
 });
 
 // ===========================================================================
@@ -612,6 +629,8 @@ $('#apiKey').value = localStorage.getItem('r2_key') || '';
 $('#apiKey').addEventListener('input', () => {
   localStorage.setItem('r2_key', $('#apiKey').value);
   updateAuthDot();
+  FolderPicker.invalidate();
+  FolderPicker.populate();
 });
 function updateAuthDot() { $('#authDot').classList.toggle('ok', !!$('#apiKey').value); }
 updateAuthDot();
@@ -962,6 +981,7 @@ const UL = {
     const folderPath = prefix.startsWith('/') ? prefix : '/' + prefix;
     try {
       await API.call('/api/files/mkdir', { method:'POST', body:{ path: folderPath }});
+      FolderPicker.invalidate();
     } catch(e) {
       console.log('Folder may already exist:', e.message);
     }
@@ -1013,6 +1033,41 @@ $('#fileInput').addEventListener('change', e => { if(e.target.files.length) UL.a
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('over'));
 dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('over'); if(e.dataTransfer.files.length) UL.addFiles(e.dataTransfer.files); });
+
+// ===========================================================================
+// FOLDER PICKER — shared destination-folder suggestions
+// ===========================================================================
+// Every folder-path field in the app (Download/Upload destination, Move/Copy
+// destination, New Folder's parent) used to be a bare text input: the only
+// way to know a folder existed was to remember its exact spelling. This
+// feeds one shared <datalist> from the real folder tree so those fields
+// behave as a combobox — pick an existing folder from the dropdown, or type
+// a new path to create one — instead of guessing.
+const FolderPicker = {
+  cache: null,
+
+  invalidate() { this.cache = null; },
+
+  async list() {
+    if (this.cache) return this.cache;
+    try {
+      const data = await API.call('/api/folders');
+      this.cache = (data.folders || []);
+    } catch (e) {
+      this.cache = [];
+    }
+    return this.cache;
+  },
+
+  async populate() {
+    const folders = await this.list();
+    const dl = $('#folderOptions');
+    if (!dl) return;
+    dl.innerHTML = ['/', ...folders]
+      .map(f => `<option value="${escapeHtml(f)}">`)
+      .join('');
+  }
+};
 
 // ===========================================================================
 // FILE MANAGER (FM)
@@ -1254,6 +1309,7 @@ const FM = {
   openMove(key) {
     $('#moveFile').value = key;
     $('#moveDest').value = this.path || '/';
+    FolderPicker.populate();
     dlgMove.showModal();
     setTimeout(() => $('#moveDest').focus(), 50);
   },
@@ -1277,6 +1333,7 @@ const FM = {
       await API.call('/api/files/move', { method:'POST', body:{ source, destination: dest }});
       dlgMove.close();
       toast('Moved to ' + dest, 'success');
+      FolderPicker.invalidate();
       this.load();
     } catch(e) { toast(e.message,'error'); }
   },
@@ -1284,6 +1341,7 @@ const FM = {
   openCopy(key) {
     $('#copyFile').value = key;
     $('#copyDest').value = this.path || '/';
+    FolderPicker.populate();
     dlgCopy.showModal();
     setTimeout(() => $('#copyDest').focus(), 50);
   },
@@ -1307,6 +1365,7 @@ const FM = {
       await API.call('/api/files/copy', { method:'POST', body:{ source, destination: dest }});
       dlgCopy.close();
       toast('Copied to ' + dest, 'success');
+      FolderPicker.invalidate();
       this.load();
     } catch(e) { toast(e.message,'error'); }
   },
@@ -1385,6 +1444,7 @@ const FM = {
       // client-side.
       await API.call('/api/files/delete', { method:'POST', body:{ prefix }});
       toast('Folder deleted','success');
+      FolderPicker.invalidate();
       this.load();
     } catch(e) { toast(e.message,'error'); }
   },
@@ -1402,13 +1462,27 @@ const FM = {
     } catch(e) { toast(e.message,'error'); }
   },
 
-  promptMkdir() {
-    const name = prompt('Folder name:');
-    if(!name) return;
-    const path = this.path + name.replace(/[\/\\]/g,'');
-    API.call('/api/files/mkdir', { method:'POST', body:{ path }})
-      .then(()=>{ toast('Folder created','success'); this.load(); })
-      .catch(e=>toast(e.message,'error'));
+  openMkdir() {
+    $('#mkdirParent').value = this.path || '/';
+    $('#mkdirName').value = '';
+    FolderPicker.populate();
+    dlgMkdir.showModal();
+    setTimeout(() => $('#mkdirName').focus(), 50);
+  },
+
+  async doMkdir() {
+    const name = $('#mkdirName').value.trim().replace(/[\/\\]/g, '');
+    if (!name) return toast('Folder name is required', 'error');
+    let parent = $('#mkdirParent').value.trim() || '/';
+    if (!parent.startsWith('/')) parent = '/' + parent;
+    const path = (parent.endsWith('/') ? parent : parent + '/') + name;
+    try {
+      await API.call('/api/files/mkdir', { method:'POST', body:{ path }});
+      dlgMkdir.close();
+      toast('Folder created','success');
+      FolderPicker.invalidate();
+      this.load();
+    } catch(e) { toast(e.message,'error'); }
   }
 };
 
@@ -1536,13 +1610,14 @@ const ADMIN = {
 // ===========================================================================
 // Dialog refs
 // ===========================================================================
+const dlgMkdir = $('#dlgMkdir');
 const dlgRename = $('#dlgRename');
 const dlgShare = $('#dlgShare');
 const dlgMove = $('#dlgMove');
 const dlgCopy = $('#dlgCopy');
 const dlgPreview = $('#dlgPreview');
 // Close on backdrop click
-[dlgRename, dlgShare, dlgMove, dlgCopy, dlgPreview].forEach(d => d.addEventListener('click', e => { if(e.target===d) d.close(); }));
+[dlgMkdir, dlgRename, dlgShare, dlgMove, dlgCopy, dlgPreview].forEach(d => d.addEventListener('click', e => { if(e.target===d) d.close(); }));
 // Stop media playback when the preview dialog closes
 dlgPreview.addEventListener('close', () => {
   $('#previewContent').querySelectorAll('video,audio').forEach(el => { try { el.pause(); } catch {} });
@@ -1558,6 +1633,12 @@ $('#dlUrl').addEventListener('input', () => {
 
 // Load files on first visit to tab
 // (handled by tab click handler)
+
+// Downloads is the default active tab, so its folder dropdown needs an
+// initial fill too (later tabs get theirs from the tab-click handler
+// above). Best-effort: silently empty until an API key is entered, same
+// as every other authenticated call made before login.
+FolderPicker.populate();
 </script>
 </body>
 </html>
