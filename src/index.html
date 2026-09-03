@@ -1379,15 +1379,11 @@ const FM = {
   async deleteFolder(prefix) {
     if(!confirm('Delete folder and its contents?')) return;
     try {
-      // List all files in folder
-      const data = await API.call('/api/files?'+new URLSearchParams({ prefix, limit:'999' }));
-      const keys = (data.files||[]).map(f=>f.key);
-      // Also delete the .emptydir marker and the WebDAV "_dir" marker, so the
-      // folder doesn't linger as a ghost directory visible only to WebDAV
-      // clients after being deleted from here.
-      keys.push(prefix+'.emptydir');
-      keys.push(prefix.replace(/\/$/,'')+'_dir');
-      if(keys.length) await API.call('/api/files/delete', { method:'POST', body:{ keys }});
+      // The server walks the whole subtree under this prefix (however deep)
+      // and deletes every file, marker and nested subfolder itself — the
+      // one-level listing this page has is not enough to enumerate that
+      // client-side.
+      await API.call('/api/files/delete', { method:'POST', body:{ prefix }});
       toast('Folder deleted','success');
       this.load();
     } catch(e) { toast(e.message,'error'); }

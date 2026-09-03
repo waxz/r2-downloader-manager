@@ -278,6 +278,16 @@ export function createMockEnv(overrides = {}) {
     // above. Tests that specifically want the "unconfigured" case pass
     // { APIKEYSECRET: undefined } to override this.
     APIKEYSECRET: "test-api-key",
+    // Stand-in for the Workers static-assets binding that serves the admin
+    // frontend at "/". Real content doesn't matter for tests that only
+    // check *whether* a request was routed here vs. to WebDAV.
+    ASSETS: {
+      fetch: async () =>
+        new Response("<html>mock frontend</html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        }),
+    },
     ...overrides,
   };
 }
