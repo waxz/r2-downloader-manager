@@ -32,7 +32,21 @@ import {
   joinStoragePath,
   ensureR2CompatibleStorage,
   getParentPath,
+  getSettings,
+  saveSettings,
+  DEFAULT_SETTINGS,
 } from "./webdav.js";
+
+// ============================================================================
+// VERSION / SYSTEM INFO
+// ============================================================================
+// Bumped alongside package.json's "version" field. Kept as a plain constant
+// (rather than importing package.json) so the Workers bundler never has to
+// deal with JSON-module interop.
+const APP_VERSION = "1.1.0";
+const APP_NAME = "R2 Drive";
+const REPO_OWNER = "waxz";
+const REPO_NAME = "r2-downloader-manager";
 
 // ============================================================================
 // MAIN WORKER
@@ -82,11 +96,49 @@ async function fetch_api(request, env) {
     // --- Public share (no auth) ---
     if (path.startsWith("/s/")) return handlePublicShare(url, env);
 
+    // --- System info (no auth): version/update badge needs to render even
+    // before the user has entered an API key, and none of this is sensitive.
+    if (path === "/api/system/info" && method === "GET") {
+      const settings = await getSettings(env);
+      return jsonOk({
+        name: APP_NAME,
+        version: APP_VERSION,
+        repoOwner: REPO_OWNER,
+        repoName: REPO_NAME,
+        siteTitle: settings.siteTitle,
+        maintenanceMode: settings.maintenanceMode,
+        webdavEnabled: settings.webdavEnabled,
+      });
+    }
+
     // --- Auth gate for everything else ---
     const authKey = env.AUTH_KEY || env.APIKEYSECRET;
     if (authKey) {
       const k = url.searchParams.get("key") || request.headers.get("x-api-key");
       if (k !== authKey) return jsonError("Unauthorized", 401);
+    }
+
+    // --- Admin: system settings ---
+    if (path === "/api/admin/settings" && method === "GET") {
+      return jsonOk(await getSettings(env));
+    }
+    if (path === "/api/admin/settings" && method === "POST") {
+      const body = await readBody(request);
+      if (!body) return jsonError("Invalid body");
+      return jsonOk(await saveSettings(env, body));
+    }
+    if (path === "/api/admin/settings/reset" && method === "POST") {
+      await saveSettings(env, DEFAULT_SETTINGS);
+      return jsonOk(await getSettings(env));
+    }
+
+    // Maintenance mode blocks the rest of the management API (uploads,
+    // downloads, file ops, shares) so an admin can safely work on the
+    // bucket, but the settings routes above must stay reachable — otherwise
+    // there would be no way to turn maintenance mode back off again.
+    const settings = await getSettings(env);
+    if (settings.maintenanceMode) {
+      return jsonError("Service is currently in maintenance mode", 503);
     }
 
     // --- File routes ---
@@ -382,6 +434,14 @@ export default {
 // Route Handlers
 // ============================================================================
 async function handlePublicShare(url, env) {
+  await ensureWorkerStorage(env);
+  const settings = await getSettings(env);
+  if (settings.maintenanceMode) {
+    return new Response("Service is currently in maintenance mode", { status: 503 });
+  }
+  if (!settings.allowPublicShares) {
+    return new Response("Public sharing is disabled by the administrator", { status: 403 });
+  }
   const code = url.searchParams.get("code") || "";
   const token = url.pathname.split("/")[2];
   if (!token) return new Response("Missing token", { status: 400 });
@@ -450,6 +510,19 @@ async function handleListFiles(url, env) {
 
   for (const result of [listed, listedFallback].filter(Boolean)) {
     for (const object of result.objects || []) {
+      // Internal bookkeeping keys (.tokens/, .jobs/, .settings/) are stored
+      // WITHOUT a leading slash, unlike every user-facing file/folder key.
+      // Must check that here, on the raw key, before normalizeStoragePath
+      // unconditionally prepends "/" and turns ".tokens/x" into "/.tokens/x"
+      // — which no longer starts with ".tokens/" and would otherwise slip
+      // past the exclusion check below and appear as a bogus folder in the
+      // file manager.
+      if (
+        object.key.startsWith(".tokens/") ||
+        object.key.startsWith(".jobs/") ||
+        object.key.startsWith(".settings/")
+      )
+        continue;
       const key = normalizeStoragePath(object.key);
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
@@ -476,13 +549,10 @@ async function handleListFiles(url, env) {
 
   for (const object of collectedObjects) {
     const key = object.key;
-    if (
-      !key ||
-      key === "/" ||
-      key.startsWith(".tokens/") ||
-      key.startsWith(".jobs/")
-    )
-      continue;
+    // .tokens/.jobs/.settings keys are already filtered out above, before
+    // normalization; collectedObjects only ever contains normalized (leading
+    // "/") keys here.
+    if (!key || key === "/") continue;
     if (
       key.endsWith(".emptydir") ||
       key.endsWith("_meta") ||
