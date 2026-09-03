@@ -36,6 +36,7 @@ import {
   saveSettings,
   DEFAULT_SETTINGS,
   timingSafeEqual,
+  normalizeWebdavRoot,
 } from "./webdav.js";
 
 // ============================================================================
@@ -116,6 +117,7 @@ async function fetch_api(request, env) {
         siteTitle: settings.siteTitle,
         maintenanceMode: settings.maintenanceMode,
         webdavEnabled: settings.webdavEnabled,
+        webdavRootPath: normalizeWebdavRoot(settings.webdavRootPath),
       });
     }
 
@@ -423,7 +425,11 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
       const method = request.method;
-      console.log("Incoming request:", { method, path,request });
+      // Log only primitive fields, not the raw Request object: logging the
+      // whole object (its AbortSignal in particular) has been observed to
+      // trip up structured-clone-based log/IPC pipelines — notably Node's
+      // test runner reporter when tests exercise this path directly.
+      console.log("Incoming request:", { method, path });
 
       // --- Public share (no auth) ---
       if (path.startsWith("/s/")) return handlePublicShare(url, env);
