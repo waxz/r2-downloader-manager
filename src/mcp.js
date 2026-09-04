@@ -216,6 +216,71 @@ const TOOLS = [
       "Use this to see what has already been fetched before calling fetch_url again.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "save_note",
+    description:
+      "Save Claude's own output — analysis, summaries, research notes — as a Markdown file " +
+      "in R2 storage so collaborators can read, share, and build on it. " +
+      "Files are stored under /notes/ with a timestamped filename and YAML frontmatter " +
+      "(title, tags, source_url, created_at). Use this after producing any substantial output " +
+      "so the work persists beyond the conversation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Note title (also used to derive the filename)." },
+        content: { type: "string", description: "Markdown body of the note." },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional topic tags for filtering (e.g. [\"robotics\", \"arxiv\"]).",
+        },
+        source_url: {
+          type: "string",
+          description: "Optional URL this note was derived from (e.g. an arxiv paper URL).",
+        },
+        path: {
+          type: "string",
+          description: "Override the auto-generated path. Defaults to /notes/YYYY-MM-DD-<slug>.md.",
+        },
+      },
+      required: ["title", "content"],
+    },
+  },
+  {
+    name: "append_note",
+    description:
+      "Append new content to an existing note in R2 storage. " +
+      "Useful for adding follow-up analysis, new findings, or corrections to a previous session's note " +
+      "without overwriting it. A timestamped section header is inserted before the new content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the existing note, e.g. /notes/2026-09-04-mrta.md." },
+        content: { type: "string", description: "Markdown content to append." },
+        section_title: {
+          type: "string",
+          description: "Optional heading for the appended section (default: \"Update\").",
+        },
+      },
+      required: ["path", "content"],
+    },
+  },
+  {
+    name: "list_notes",
+    description:
+      "List notes saved by Claude, with their title, tags, source URL and creation date " +
+      "parsed from YAML frontmatter. Use this at the start of a session to see what research " +
+      "has already been done before fetching or analysing again.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prefix: {
+          type: "string",
+          description: "Filter by path prefix (default: \"/notes/\").",
+        },
+      },
+    },
+  },
 ];
 
 // ----------------------------------------------------------------------------
@@ -428,6 +493,127 @@ async function toolListFetchCache(env) {
   return { count: entries.length, entries };
 }
 
+// ----------------------------------------------------------------------------
+// Note tools — save / append / list Claude's own output for collaboration
+// ----------------------------------------------------------------------------
+
+// Converts a title to a URL-safe slug: lowercase, spaces→hyphens, strip
+// everything except alphanumerics and hyphens, collapse consecutive hyphens.
+function slugify(title) {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/[\s-]+/g, "-")
+    .slice(0, 60);
+}
+
+// Serialises a plain object as YAML front-matter lines (string values only;
+// arrays become inline YAML sequences). No external YAML library required.
+function buildFrontmatter(fields) {
+  const lines = ["---"];
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) {
+      lines.push(`${k}: [${v.map(s => JSON.stringify(s)).join(", ")}]`);
+    } else {
+      lines.push(`${k}: ${JSON.stringify(String(v))}`);
+    }
+  }
+  lines.push("---");
+  return lines.join("\n");
+}
+
+// Parses the YAML front-matter block from a Markdown string. Returns a plain
+// object with string/array values, or {} when no front-matter is present.
+function parseFrontmatter(text) {
+  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return {};
+  const result = {};
+  for (const line of m[1].split("\n")) {
+    const kv = line.match(/^(\w+):\s*(.+)$/);
+    if (!kv) continue;
+    const [, key, raw] = kv;
+    if (raw.startsWith("[")) {
+      try { result[key] = JSON.parse(raw.replace(/'/g, '"')); } catch { result[key] = raw; }
+    } else {
+      try { result[key] = JSON.parse(raw); } catch { result[key] = raw; }
+    }
+  }
+  return result;
+}
+
+// Saves Claude's output as a Markdown note with YAML frontmatter.
+async function toolSaveNote(env, args) {
+  if (!args?.title) throw new ApiError("Missing title", 400);
+  if (!args?.content) throw new ApiError("Missing content", 400);
+
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10); // YYYY-MM-DD
+  const slug = slugify(args.title);
+  const storagePath = args?.path || `/notes/${datePart}-${slug}.md`;
+
+  const frontmatter = buildFrontmatter({
+    title: args.title,
+    created_at: now.toISOString(),
+    tags: args?.tags?.length ? args.tags : undefined,
+    source_url: args?.source_url || undefined,
+  });
+
+  const markdown = `${frontmatter}\n\n# ${args.title}\n\n${args.content}\n`;
+  const bytes = new TextEncoder().encode(markdown);
+  return writeFile(env, storagePath, bytes, "text/markdown");
+}
+
+// Appends a new timestamped section to an existing note.
+async function toolAppendNote(env, args) {
+  if (!args?.path) throw new ApiError("Missing path", 400);
+  if (!args?.content) throw new ApiError("Missing content", 400);
+
+  const key = normalizeStoragePath(args.path);
+  const obj = await env.WEBDAV_STORAGE.get(key);
+  if (!obj) throw new ApiError("Note not found", 404);
+
+  const existing = await obj.text();
+  const sectionTitle = args?.section_title || "Update";
+  const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const appended = `${existing}\n\n---\n\n## ${sectionTitle} — ${timestamp}\n\n${args.content}\n`;
+
+  const bytes = new TextEncoder().encode(appended);
+  await env.WEBDAV_STORAGE.put(key, bytes, {
+    httpMetadata: { contentType: "text/markdown" },
+    customMetadata: { source: "append_note", timestamp: Date.now().toString() },
+  });
+  return { path: key, size: bytes.length, status: "appended" };
+}
+
+// Lists notes under a given prefix, parsing their YAML frontmatter.
+async function toolListNotes(env, args) {
+  const prefix = normalizeStoragePath(args?.prefix || "/notes/");
+  const storagePrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+  const listed = await env.WEBDAV_STORAGE.list({ prefix: storagePrefix, limit: 500 });
+  const notes = [];
+  for (const obj of listed.objects || []) {
+    const key = obj.key;
+    if (key.endsWith("_meta") || key.endsWith("_dir") || key.endsWith(".emptydir")) continue;
+    try {
+      const raw = await env.WEBDAV_STORAGE.get(key);
+      const text = await raw.text();
+      const fm = parseFrontmatter(text);
+      notes.push({
+        path: normalizeStoragePath(key),
+        title: fm.title || key.split("/").pop(),
+        created_at: fm.created_at || null,
+        tags: fm.tags || [],
+        source_url: fm.source_url || null,
+        size: obj.size,
+      });
+    } catch {}
+  }
+  notes.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  return { count: notes.length, notes };
+}
+
 const TOOL_HANDLERS = {
   list_directory: toolListDirectory,
   list_all_folders: toolListAllFolders,
@@ -442,6 +628,9 @@ const TOOL_HANDLERS = {
   fetch_url: toolFetchUrl,
   save_url_to_storage: toolSaveUrlToStorage,
   list_fetch_cache: toolListFetchCache,
+  save_note: toolSaveNote,
+  append_note: toolAppendNote,
+  list_notes: toolListNotes,
 };
 
 // Tool-execution failures (bad args, "not found", "already exists", ...) are
