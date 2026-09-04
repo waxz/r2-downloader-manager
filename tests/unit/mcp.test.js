@@ -78,6 +78,11 @@ test("tools/list returns every file-system tool with a name and schema", async (
       "copy_file",
       "get_file_info",
       "fetch_url",
+      "save_url_to_storage",
+      "list_fetch_cache",
+      "save_note",
+      "append_note",
+      "list_notes",
     ],
   );
   for (const t of body.result.tools) {
@@ -261,4 +266,123 @@ test("fetch_url rejects an invalid URL with isError", async () => {
   const res = await callTool(env, "fetch_url", { url: "not a url at all" });
   assert.equal(res.isError, true);
   assert.match(res.text, /Invalid URL/i);
+});
+
+test("save_url_to_storage rejects missing url", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "save_url_to_storage", {});
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Missing url/i);
+});
+
+test("save_url_to_storage rejects non-http(s) scheme", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "save_url_to_storage", { url: "file:///etc/passwd" });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /http/i);
+});
+
+test("list_fetch_cache returns empty list when nothing is cached", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "list_fetch_cache", {});
+  assert.equal(res.isError, false);
+  assert.equal(res.data.count, 0);
+  assert.deepEqual(res.data.entries, []);
+});
+
+// --- Note tools ---
+
+test("save_note writes a Markdown file with YAML frontmatter", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "save_note", {
+    title: "MRTA Paper Analysis",
+    content: "Some analysis text.",
+    tags: ["robotics", "scheduling"],
+    source_url: "https://arxiv.org/abs/2608.00648",
+  });
+  assert.equal(res.isError, false);
+  assert.equal(res.data.status, "uploaded");
+  assert.match(res.data.filename, /\/notes\/.+\.md$/);
+
+  // The file content must include frontmatter and the title heading.
+  const stored = await env.WEBDAV_STORAGE.get(res.data.filename);
+  const text = await stored.text();
+  assert.match(text, /^---/);
+  assert.match(text, /title:/);
+  assert.match(text, /robotics/);
+  assert.match(text, /# MRTA Paper Analysis/);
+  assert.match(text, /Some analysis text\./);
+});
+
+test("save_note rejects missing title", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "save_note", { content: "body" });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Missing title/i);
+});
+
+test("save_note rejects missing content", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "save_note", { title: "T" });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Missing content/i);
+});
+
+test("append_note adds a timestamped section to an existing note", async () => {
+  const env = createMockEnv();
+  // Create a note first.
+  const saved = await callTool(env, "save_note", {
+    title: "Robot Nav",
+    content: "Initial notes.",
+    path: "/notes/robot-nav.md",
+  });
+  assert.equal(saved.isError, false);
+
+  const appended = await callTool(env, "append_note", {
+    path: "/notes/robot-nav.md",
+    content: "Follow-up findings.",
+    section_title: "Day 2",
+  });
+  assert.equal(appended.isError, false);
+  assert.equal(appended.data.status, "appended");
+
+  const stored = await env.WEBDAV_STORAGE.get("/notes/robot-nav.md");
+  const text = await stored.text();
+  assert.match(text, /Initial notes\./);
+  assert.match(text, /Day 2/);
+  assert.match(text, /Follow-up findings\./);
+});
+
+test("append_note returns error for a non-existent note", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "append_note", {
+    path: "/notes/ghost.md",
+    content: "stuff",
+  });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /not found/i);
+});
+
+test("list_notes returns saved notes with parsed frontmatter", async () => {
+  const env = createMockEnv();
+  await callTool(env, "save_note", {
+    title: "Paper A",
+    content: "Analysis A",
+    tags: ["tag1"],
+    path: "/notes/a.md",
+  });
+  await callTool(env, "save_note", {
+    title: "Paper B",
+    content: "Analysis B",
+    path: "/notes/b.md",
+  });
+
+  const res = await callTool(env, "list_notes", {});
+  assert.equal(res.isError, false);
+  assert.equal(res.data.count, 2);
+  const titles = res.data.notes.map(n => n.title);
+  assert.ok(titles.includes("Paper A"));
+  assert.ok(titles.includes("Paper B"));
+  const a = res.data.notes.find(n => n.title === "Paper A");
+  assert.deepEqual(a.tags, ["tag1"]);
 });

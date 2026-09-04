@@ -156,15 +156,13 @@ const TOOLS = [
     description:
       "Fetch any URL and return its content. Use this whenever direct outbound access to a " +
       "domain is blocked (e.g. egress-proxy restrictions in Claude's remote environment). " +
-      "Text responses (HTML, JSON, XML, plain text, etc.) are returned as UTF-8 strings; " +
-      "binary responses are returned base64-encoded. Redirects are followed automatically.",
+      "GET responses are cached in R2 by default (TTL: 86400 s) — subsequent calls to the " +
+      "same URL return instantly from cache. Pass cache:false or cache_ttl:0 to bypass. " +
+      "Text responses (HTML, JSON, XML, plain text) are returned as UTF-8; binary as base64.",
     inputSchema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "The URL to fetch.",
-        },
+        url: { type: "string", description: "The URL to fetch." },
         method: {
           type: "string",
           enum: ["GET", "HEAD", "POST"],
@@ -175,12 +173,112 @@ const TOOLS = [
           description: "Optional request headers as key/value pairs.",
           additionalProperties: { type: "string" },
         },
-        body: {
-          type: "string",
-          description: "Optional request body (for POST).",
+        body: { type: "string", description: "Request body (POST only)." },
+        cache: {
+          type: "boolean",
+          description: "Use R2 cache for GET requests (default: true). Pass false to force a fresh fetch.",
+        },
+        cache_ttl: {
+          type: "integer",
+          description: "Cache lifetime in seconds (default: 86400). Pass 0 to disable caching.",
         },
       },
       required: ["url"],
+    },
+  },
+  {
+    name: "save_url_to_storage",
+    description:
+      "Download any URL and save the result as a file in R2 storage. " +
+      "Useful for archiving arxiv PDFs, datasets, or any remote file so it can be " +
+      "read later with read_file. The destination path defaults to /downloads/<filename>.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The URL to download." },
+        path: {
+          type: "string",
+          description: 'Storage path (e.g. "/papers/2608.00648.pdf"). Derived from URL if omitted.',
+        },
+        headers: {
+          type: "object",
+          description: "Optional request headers.",
+          additionalProperties: { type: "string" },
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "list_fetch_cache",
+    description:
+      "List all URLs currently held in the fetch cache, with their expiry time and age. " +
+      "Use this to see what has already been fetched before calling fetch_url again.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "save_note",
+    description:
+      "Save Claude's own output — analysis, summaries, research notes — as a Markdown file " +
+      "in R2 storage so collaborators can read, share, and build on it. " +
+      "Files are stored under /notes/ with a timestamped filename and YAML frontmatter " +
+      "(title, tags, source_url, created_at). Use this after producing any substantial output " +
+      "so the work persists beyond the conversation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Note title (also used to derive the filename)." },
+        content: { type: "string", description: "Markdown body of the note." },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional topic tags for filtering (e.g. [\"robotics\", \"arxiv\"]).",
+        },
+        source_url: {
+          type: "string",
+          description: "Optional URL this note was derived from (e.g. an arxiv paper URL).",
+        },
+        path: {
+          type: "string",
+          description: "Override the auto-generated path. Defaults to /notes/YYYY-MM-DD-<slug>.md.",
+        },
+      },
+      required: ["title", "content"],
+    },
+  },
+  {
+    name: "append_note",
+    description:
+      "Append new content to an existing note in R2 storage. " +
+      "Useful for adding follow-up analysis, new findings, or corrections to a previous session's note " +
+      "without overwriting it. A timestamped section header is inserted before the new content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the existing note, e.g. /notes/2026-09-04-mrta.md." },
+        content: { type: "string", description: "Markdown content to append." },
+        section_title: {
+          type: "string",
+          description: "Optional heading for the appended section (default: \"Update\").",
+        },
+      },
+      required: ["path", "content"],
+    },
+  },
+  {
+    name: "list_notes",
+    description:
+      "List notes saved by Claude, with their title, tags, source URL and creation date " +
+      "parsed from YAML frontmatter. Use this at the start of a session to see what research " +
+      "has already been done before fetching or analysing again.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prefix: {
+          type: "string",
+          description: "Filter by path prefix (default: \"/notes/\").",
+        },
+      },
     },
   },
 ];
@@ -264,35 +362,67 @@ async function toolGetFileInfo(env, args) {
   return getFileInfo(env, args?.path || "");
 }
 
-// Accepts any HTTPS URL and returns its content. Text responses come back as
-// UTF-8 strings; binary (images, PDFs, etc.) as base64. Primarily useful
-// when Claude's remote environment cannot reach a domain directly due to
-// egress-proxy restrictions — the Cloudflare Worker has no such constraint.
-async function toolFetchUrl(_env, args) {
+// ----------------------------------------------------------------------------
+// fetch_url / cache helpers
+// ----------------------------------------------------------------------------
+const CACHE_PREFIX = ".fetch_cache/";
+
+function validateHttpUrl(rawUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { throw new ApiError("Invalid URL", 400); }
+  if (!["https:", "http:"].includes(parsed.protocol))
+    throw new ApiError("Only http/https URLs are allowed", 400);
+  return parsed;
+}
+
+async function urlHash(url) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 40);
+}
+
+async function readCache(env, hash) {
+  const metaObj = await env.WEBDAV_STORAGE.get(`${CACHE_PREFIX}${hash}_meta`);
+  if (!metaObj) return null;
+  const meta = await metaObj.json();
+  if (Date.now() > meta.expires) return null; // expired
+  const bodyObj = await env.WEBDAV_STORAGE.get(`${CACHE_PREFIX}${hash}`);
+  if (!bodyObj) return null;
+  return { meta, body: await bodyObj.text() };
+}
+
+async function writeCache(env, hash, url, responseMeta, body, ttl) {
+  await env.WEBDAV_STORAGE.put(`${CACHE_PREFIX}${hash}`, body);
+  await env.WEBDAV_STORAGE.put(
+    `${CACHE_PREFIX}${hash}_meta`,
+    JSON.stringify({
+      url,
+      cached_at: new Date().toISOString(),
+      expires: Date.now() + ttl * 1000,
+      response: responseMeta,
+    }),
+  );
+}
+
+async function toolFetchUrl(env, args) {
   const rawUrl = args?.url;
   if (!rawUrl) throw new ApiError("Missing url", 400);
-
-  // Validate URL to prevent SSRF against internal Cloudflare / Worker
-  // infrastructure (169.254.x.x, 10.x.x.x, etc.).
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new ApiError("Invalid URL", 400);
-  }
-  if (!["https:", "http:"].includes(parsed.protocol)) {
-    throw new ApiError("Only http/https URLs are allowed", 400);
-  }
+  validateHttpUrl(rawUrl);
 
   const method = (args?.method || "GET").toUpperCase();
-  const reqInit = { method, redirect: "follow" };
+  const useCache = args?.cache !== false && method === "GET";
+  const cacheTtl = Number.isFinite(args?.cache_ttl) ? args.cache_ttl : 86400;
 
-  if (args?.headers && typeof args.headers === "object") {
-    reqInit.headers = args.headers;
+  if (useCache && cacheTtl > 0) {
+    const hash = await urlHash(rawUrl);
+    const hit = await readCache(env, hash);
+    if (hit) {
+      return { ...hit.meta.response, body: hit.body, cached: true, cached_at: hit.meta.cached_at };
+    }
   }
-  if (method === "POST" && args?.body) {
-    reqInit.body = args.body;
-  }
+
+  const reqInit = { method, redirect: "follow" };
+  if (args?.headers && typeof args.headers === "object") reqInit.headers = args.headers;
+  if (method === "POST" && args?.body) reqInit.body = args.body;
 
   const res = await fetch(rawUrl, reqInit);
   const contentType = res.headers.get("content-type") || "";
@@ -308,13 +438,180 @@ async function toolFetchUrl(_env, args) {
     encoding = "base64";
   }
 
-  return {
-    url: rawUrl,
-    status: res.status,
-    content_type: contentType,
-    encoding,
-    body,
-  };
+  const responseMeta = { url: rawUrl, status: res.status, content_type: contentType, encoding };
+
+  if (useCache && cacheTtl > 0 && res.status >= 200 && res.status < 300) {
+    const hash = await urlHash(rawUrl);
+    await writeCache(env, hash, rawUrl, responseMeta, body, cacheTtl);
+  }
+
+  return { ...responseMeta, body, cached: false };
+}
+
+// Downloads a URL and writes the raw bytes into R2 storage.
+async function toolSaveUrlToStorage(env, args) {
+  const rawUrl = args?.url;
+  if (!rawUrl) throw new ApiError("Missing url", 400);
+  const parsed = validateHttpUrl(rawUrl);
+
+  const filename = parsed.pathname.split("/").filter(Boolean).pop() || "download";
+  const storagePath = args?.path || `/downloads/${filename}`;
+
+  const reqInit = { redirect: "follow" };
+  if (args?.headers && typeof args.headers === "object") reqInit.headers = args.headers;
+
+  const res = await fetch(rawUrl, reqInit);
+  if (!res.ok) throw new ApiError(`Fetch failed: HTTP ${res.status}`, 502);
+
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  return writeFile(env, storagePath, bytes, contentType);
+}
+
+// Lists all entries in the fetch cache with expiry and freshness info.
+async function toolListFetchCache(env) {
+  const listed = await env.WEBDAV_STORAGE.list({ prefix: CACHE_PREFIX, limit: 500 });
+  const now = Date.now();
+  const entries = [];
+  for (const obj of listed.objects || []) {
+    if (!obj.key.endsWith("_meta")) continue;
+    try {
+      const raw = await env.WEBDAV_STORAGE.get(obj.key);
+      const meta = await raw.json();
+      entries.push({
+        url: meta.url,
+        cached_at: meta.cached_at,
+        expires_at: new Date(meta.expires).toISOString(),
+        ttl_remaining_s: Math.max(0, Math.round((meta.expires - now) / 1000)),
+        expired: now > meta.expires,
+        status: meta.response?.status,
+        content_type: meta.response?.content_type,
+      });
+    } catch {}
+  }
+  entries.sort((a, b) => a.url.localeCompare(b.url));
+  return { count: entries.length, entries };
+}
+
+// ----------------------------------------------------------------------------
+// Note tools — save / append / list Claude's own output for collaboration
+// ----------------------------------------------------------------------------
+
+// Converts a title to a URL-safe slug: lowercase, spaces→hyphens, strip
+// everything except alphanumerics and hyphens, collapse consecutive hyphens.
+function slugify(title) {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/[\s-]+/g, "-")
+    .slice(0, 60);
+}
+
+// Serialises a plain object as YAML front-matter lines (string values only;
+// arrays become inline YAML sequences). No external YAML library required.
+function buildFrontmatter(fields) {
+  const lines = ["---"];
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) {
+      lines.push(`${k}: [${v.map(s => JSON.stringify(s)).join(", ")}]`);
+    } else {
+      lines.push(`${k}: ${JSON.stringify(String(v))}`);
+    }
+  }
+  lines.push("---");
+  return lines.join("\n");
+}
+
+// Parses the YAML front-matter block from a Markdown string. Returns a plain
+// object with string/array values, or {} when no front-matter is present.
+function parseFrontmatter(text) {
+  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return {};
+  const result = {};
+  for (const line of m[1].split("\n")) {
+    const kv = line.match(/^(\w+):\s*(.+)$/);
+    if (!kv) continue;
+    const [, key, raw] = kv;
+    if (raw.startsWith("[")) {
+      try { result[key] = JSON.parse(raw.replace(/'/g, '"')); } catch { result[key] = raw; }
+    } else {
+      try { result[key] = JSON.parse(raw); } catch { result[key] = raw; }
+    }
+  }
+  return result;
+}
+
+// Saves Claude's output as a Markdown note with YAML frontmatter.
+async function toolSaveNote(env, args) {
+  if (!args?.title) throw new ApiError("Missing title", 400);
+  if (!args?.content) throw new ApiError("Missing content", 400);
+
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10); // YYYY-MM-DD
+  const slug = slugify(args.title);
+  const storagePath = args?.path || `/notes/${datePart}-${slug}.md`;
+
+  const frontmatter = buildFrontmatter({
+    title: args.title,
+    created_at: now.toISOString(),
+    tags: args?.tags?.length ? args.tags : undefined,
+    source_url: args?.source_url || undefined,
+  });
+
+  const markdown = `${frontmatter}\n\n# ${args.title}\n\n${args.content}\n`;
+  const bytes = new TextEncoder().encode(markdown);
+  return writeFile(env, storagePath, bytes, "text/markdown");
+}
+
+// Appends a new timestamped section to an existing note.
+async function toolAppendNote(env, args) {
+  if (!args?.path) throw new ApiError("Missing path", 400);
+  if (!args?.content) throw new ApiError("Missing content", 400);
+
+  const key = normalizeStoragePath(args.path);
+  const obj = await env.WEBDAV_STORAGE.get(key);
+  if (!obj) throw new ApiError("Note not found", 404);
+
+  const existing = await obj.text();
+  const sectionTitle = args?.section_title || "Update";
+  const timestamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const appended = `${existing}\n\n---\n\n## ${sectionTitle} — ${timestamp}\n\n${args.content}\n`;
+
+  const bytes = new TextEncoder().encode(appended);
+  await env.WEBDAV_STORAGE.put(key, bytes, {
+    httpMetadata: { contentType: "text/markdown" },
+    customMetadata: { source: "append_note", timestamp: Date.now().toString() },
+  });
+  return { path: key, size: bytes.length, status: "appended" };
+}
+
+// Lists notes under a given prefix, parsing their YAML frontmatter.
+async function toolListNotes(env, args) {
+  const prefix = normalizeStoragePath(args?.prefix || "/notes/");
+  const storagePrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+  const listed = await env.WEBDAV_STORAGE.list({ prefix: storagePrefix, limit: 500 });
+  const notes = [];
+  for (const obj of listed.objects || []) {
+    const key = obj.key;
+    if (key.endsWith("_meta") || key.endsWith("_dir") || key.endsWith(".emptydir")) continue;
+    try {
+      const raw = await env.WEBDAV_STORAGE.get(key);
+      const text = await raw.text();
+      const fm = parseFrontmatter(text);
+      notes.push({
+        path: normalizeStoragePath(key),
+        title: fm.title || key.split("/").pop(),
+        created_at: fm.created_at || null,
+        tags: fm.tags || [],
+        source_url: fm.source_url || null,
+        size: obj.size,
+      });
+    } catch {}
+  }
+  notes.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  return { count: notes.length, notes };
 }
 
 const TOOL_HANDLERS = {
@@ -329,6 +626,11 @@ const TOOL_HANDLERS = {
   copy_file: toolCopyFile,
   get_file_info: toolGetFileInfo,
   fetch_url: toolFetchUrl,
+  save_url_to_storage: toolSaveUrlToStorage,
+  list_fetch_cache: toolListFetchCache,
+  save_note: toolSaveNote,
+  append_note: toolAppendNote,
+  list_notes: toolListNotes,
 };
 
 // Tool-execution failures (bad args, "not found", "already exists", ...) are
