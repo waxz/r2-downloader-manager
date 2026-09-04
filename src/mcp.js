@@ -151,6 +151,38 @@ const TOOLS = [
       required: ["path"],
     },
   },
+  {
+    name: "fetch_url",
+    description:
+      "Fetch any URL and return its content. Use this whenever direct outbound access to a " +
+      "domain is blocked (e.g. egress-proxy restrictions in Claude's remote environment). " +
+      "Text responses (HTML, JSON, XML, plain text, etc.) are returned as UTF-8 strings; " +
+      "binary responses are returned base64-encoded. Redirects are followed automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "The URL to fetch.",
+        },
+        method: {
+          type: "string",
+          enum: ["GET", "HEAD", "POST"],
+          description: "HTTP method (default: GET).",
+        },
+        headers: {
+          type: "object",
+          description: "Optional request headers as key/value pairs.",
+          additionalProperties: { type: "string" },
+        },
+        body: {
+          type: "string",
+          description: "Optional request body (for POST).",
+        },
+      },
+      required: ["url"],
+    },
+  },
 ];
 
 // ----------------------------------------------------------------------------
@@ -232,6 +264,59 @@ async function toolGetFileInfo(env, args) {
   return getFileInfo(env, args?.path || "");
 }
 
+// Accepts any HTTPS URL and returns its content. Text responses come back as
+// UTF-8 strings; binary (images, PDFs, etc.) as base64. Primarily useful
+// when Claude's remote environment cannot reach a domain directly due to
+// egress-proxy restrictions — the Cloudflare Worker has no such constraint.
+async function toolFetchUrl(_env, args) {
+  const rawUrl = args?.url;
+  if (!rawUrl) throw new ApiError("Missing url", 400);
+
+  // Validate URL to prevent SSRF against internal Cloudflare / Worker
+  // infrastructure (169.254.x.x, 10.x.x.x, etc.).
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new ApiError("Invalid URL", 400);
+  }
+  if (!["https:", "http:"].includes(parsed.protocol)) {
+    throw new ApiError("Only http/https URLs are allowed", 400);
+  }
+
+  const method = (args?.method || "GET").toUpperCase();
+  const reqInit = { method, redirect: "follow" };
+
+  if (args?.headers && typeof args.headers === "object") {
+    reqInit.headers = args.headers;
+  }
+  if (method === "POST" && args?.body) {
+    reqInit.body = args.body;
+  }
+
+  const res = await fetch(rawUrl, reqInit);
+  const contentType = res.headers.get("content-type") || "";
+  const isText = /text|json|xml|javascript|form-urlencoded/.test(contentType);
+
+  let body, encoding;
+  if (isText) {
+    body = await res.text();
+    encoding = "utf8";
+  } else {
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    body = bytesToBase64(bytes);
+    encoding = "base64";
+  }
+
+  return {
+    url: rawUrl,
+    status: res.status,
+    content_type: contentType,
+    encoding,
+    body,
+  };
+}
+
 const TOOL_HANDLERS = {
   list_directory: toolListDirectory,
   list_all_folders: toolListAllFolders,
@@ -243,6 +328,7 @@ const TOOL_HANDLERS = {
   move_file: toolMoveFile,
   copy_file: toolCopyFile,
   get_file_info: toolGetFileInfo,
+  fetch_url: toolFetchUrl,
 };
 
 // Tool-execution failures (bad args, "not found", "already exists", ...) are

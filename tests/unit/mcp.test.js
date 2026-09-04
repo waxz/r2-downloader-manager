@@ -77,6 +77,7 @@ test("tools/list returns every file-system tool with a name and schema", async (
       "move_file",
       "copy_file",
       "get_file_info",
+      "fetch_url",
     ],
   );
   for (const t of body.result.tools) {
@@ -239,4 +240,25 @@ test("a notification (no id) gets no JSON-RPC response", async () => {
   const res = await mcpRequest(env, { jsonrpc: "2.0", method: "notifications/initialized" });
   assert.equal(res.status, 202);
   assert.equal(await res.text(), "");
+});
+
+test("fetch_url rejects missing url with isError", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "fetch_url", {});
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Missing url/i);
+});
+
+test("fetch_url rejects non-http(s) schemes with isError", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "fetch_url", { url: "ftp://example.com/file" });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /http/i);
+});
+
+test("fetch_url rejects an invalid URL with isError", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "fetch_url", { url: "not a url at all" });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Invalid URL/i);
 });
