@@ -156,15 +156,13 @@ const TOOLS = [
     description:
       "Fetch any URL and return its content. Use this whenever direct outbound access to a " +
       "domain is blocked (e.g. egress-proxy restrictions in Claude's remote environment). " +
-      "Text responses (HTML, JSON, XML, plain text, etc.) are returned as UTF-8 strings; " +
-      "binary responses are returned base64-encoded. Redirects are followed automatically.",
+      "GET responses are cached in R2 by default (TTL: 86400 s) — subsequent calls to the " +
+      "same URL return instantly from cache. Pass cache:false or cache_ttl:0 to bypass. " +
+      "Text responses (HTML, JSON, XML, plain text) are returned as UTF-8; binary as base64.",
     inputSchema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "The URL to fetch.",
-        },
+        url: { type: "string", description: "The URL to fetch." },
         method: {
           type: "string",
           enum: ["GET", "HEAD", "POST"],
@@ -175,13 +173,48 @@ const TOOLS = [
           description: "Optional request headers as key/value pairs.",
           additionalProperties: { type: "string" },
         },
-        body: {
-          type: "string",
-          description: "Optional request body (for POST).",
+        body: { type: "string", description: "Request body (POST only)." },
+        cache: {
+          type: "boolean",
+          description: "Use R2 cache for GET requests (default: true). Pass false to force a fresh fetch.",
+        },
+        cache_ttl: {
+          type: "integer",
+          description: "Cache lifetime in seconds (default: 86400). Pass 0 to disable caching.",
         },
       },
       required: ["url"],
     },
+  },
+  {
+    name: "save_url_to_storage",
+    description:
+      "Download any URL and save the result as a file in R2 storage. " +
+      "Useful for archiving arxiv PDFs, datasets, or any remote file so it can be " +
+      "read later with read_file. The destination path defaults to /downloads/<filename>.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The URL to download." },
+        path: {
+          type: "string",
+          description: 'Storage path (e.g. "/papers/2608.00648.pdf"). Derived from URL if omitted.',
+        },
+        headers: {
+          type: "object",
+          description: "Optional request headers.",
+          additionalProperties: { type: "string" },
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "list_fetch_cache",
+    description:
+      "List all URLs currently held in the fetch cache, with their expiry time and age. " +
+      "Use this to see what has already been fetched before calling fetch_url again.",
+    inputSchema: { type: "object", properties: {} },
   },
 ];
 
@@ -264,35 +297,67 @@ async function toolGetFileInfo(env, args) {
   return getFileInfo(env, args?.path || "");
 }
 
-// Accepts any HTTPS URL and returns its content. Text responses come back as
-// UTF-8 strings; binary (images, PDFs, etc.) as base64. Primarily useful
-// when Claude's remote environment cannot reach a domain directly due to
-// egress-proxy restrictions — the Cloudflare Worker has no such constraint.
-async function toolFetchUrl(_env, args) {
+// ----------------------------------------------------------------------------
+// fetch_url / cache helpers
+// ----------------------------------------------------------------------------
+const CACHE_PREFIX = ".fetch_cache/";
+
+function validateHttpUrl(rawUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { throw new ApiError("Invalid URL", 400); }
+  if (!["https:", "http:"].includes(parsed.protocol))
+    throw new ApiError("Only http/https URLs are allowed", 400);
+  return parsed;
+}
+
+async function urlHash(url) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 40);
+}
+
+async function readCache(env, hash) {
+  const metaObj = await env.WEBDAV_STORAGE.get(`${CACHE_PREFIX}${hash}_meta`);
+  if (!metaObj) return null;
+  const meta = await metaObj.json();
+  if (Date.now() > meta.expires) return null; // expired
+  const bodyObj = await env.WEBDAV_STORAGE.get(`${CACHE_PREFIX}${hash}`);
+  if (!bodyObj) return null;
+  return { meta, body: await bodyObj.text() };
+}
+
+async function writeCache(env, hash, url, responseMeta, body, ttl) {
+  await env.WEBDAV_STORAGE.put(`${CACHE_PREFIX}${hash}`, body);
+  await env.WEBDAV_STORAGE.put(
+    `${CACHE_PREFIX}${hash}_meta`,
+    JSON.stringify({
+      url,
+      cached_at: new Date().toISOString(),
+      expires: Date.now() + ttl * 1000,
+      response: responseMeta,
+    }),
+  );
+}
+
+async function toolFetchUrl(env, args) {
   const rawUrl = args?.url;
   if (!rawUrl) throw new ApiError("Missing url", 400);
-
-  // Validate URL to prevent SSRF against internal Cloudflare / Worker
-  // infrastructure (169.254.x.x, 10.x.x.x, etc.).
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new ApiError("Invalid URL", 400);
-  }
-  if (!["https:", "http:"].includes(parsed.protocol)) {
-    throw new ApiError("Only http/https URLs are allowed", 400);
-  }
+  validateHttpUrl(rawUrl);
 
   const method = (args?.method || "GET").toUpperCase();
-  const reqInit = { method, redirect: "follow" };
+  const useCache = args?.cache !== false && method === "GET";
+  const cacheTtl = Number.isFinite(args?.cache_ttl) ? args.cache_ttl : 86400;
 
-  if (args?.headers && typeof args.headers === "object") {
-    reqInit.headers = args.headers;
+  if (useCache && cacheTtl > 0) {
+    const hash = await urlHash(rawUrl);
+    const hit = await readCache(env, hash);
+    if (hit) {
+      return { ...hit.meta.response, body: hit.body, cached: true, cached_at: hit.meta.cached_at };
+    }
   }
-  if (method === "POST" && args?.body) {
-    reqInit.body = args.body;
-  }
+
+  const reqInit = { method, redirect: "follow" };
+  if (args?.headers && typeof args.headers === "object") reqInit.headers = args.headers;
+  if (method === "POST" && args?.body) reqInit.body = args.body;
 
   const res = await fetch(rawUrl, reqInit);
   const contentType = res.headers.get("content-type") || "";
@@ -308,13 +373,59 @@ async function toolFetchUrl(_env, args) {
     encoding = "base64";
   }
 
-  return {
-    url: rawUrl,
-    status: res.status,
-    content_type: contentType,
-    encoding,
-    body,
-  };
+  const responseMeta = { url: rawUrl, status: res.status, content_type: contentType, encoding };
+
+  if (useCache && cacheTtl > 0 && res.status >= 200 && res.status < 300) {
+    const hash = await urlHash(rawUrl);
+    await writeCache(env, hash, rawUrl, responseMeta, body, cacheTtl);
+  }
+
+  return { ...responseMeta, body, cached: false };
+}
+
+// Downloads a URL and writes the raw bytes into R2 storage.
+async function toolSaveUrlToStorage(env, args) {
+  const rawUrl = args?.url;
+  if (!rawUrl) throw new ApiError("Missing url", 400);
+  const parsed = validateHttpUrl(rawUrl);
+
+  const filename = parsed.pathname.split("/").filter(Boolean).pop() || "download";
+  const storagePath = args?.path || `/downloads/${filename}`;
+
+  const reqInit = { redirect: "follow" };
+  if (args?.headers && typeof args.headers === "object") reqInit.headers = args.headers;
+
+  const res = await fetch(rawUrl, reqInit);
+  if (!res.ok) throw new ApiError(`Fetch failed: HTTP ${res.status}`, 502);
+
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  return writeFile(env, storagePath, bytes, contentType);
+}
+
+// Lists all entries in the fetch cache with expiry and freshness info.
+async function toolListFetchCache(env) {
+  const listed = await env.WEBDAV_STORAGE.list({ prefix: CACHE_PREFIX, limit: 500 });
+  const now = Date.now();
+  const entries = [];
+  for (const obj of listed.objects || []) {
+    if (!obj.key.endsWith("_meta")) continue;
+    try {
+      const raw = await env.WEBDAV_STORAGE.get(obj.key);
+      const meta = await raw.json();
+      entries.push({
+        url: meta.url,
+        cached_at: meta.cached_at,
+        expires_at: new Date(meta.expires).toISOString(),
+        ttl_remaining_s: Math.max(0, Math.round((meta.expires - now) / 1000)),
+        expired: now > meta.expires,
+        status: meta.response?.status,
+        content_type: meta.response?.content_type,
+      });
+    } catch {}
+  }
+  entries.sort((a, b) => a.url.localeCompare(b.url));
+  return { count: entries.length, entries };
 }
 
 const TOOL_HANDLERS = {
@@ -329,6 +440,8 @@ const TOOL_HANDLERS = {
   copy_file: toolCopyFile,
   get_file_info: toolGetFileInfo,
   fetch_url: toolFetchUrl,
+  save_url_to_storage: toolSaveUrlToStorage,
+  list_fetch_cache: toolListFetchCache,
 };
 
 // Tool-execution failures (bad args, "not found", "already exists", ...) are

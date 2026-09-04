@@ -636,7 +636,8 @@ export async function handleListFiles(url, env) {
       if (
         object.key.startsWith(".tokens/") ||
         object.key.startsWith(".jobs/") ||
-        object.key.startsWith(".settings/")
+        object.key.startsWith(".settings/") ||
+        object.key.startsWith(".fetch_cache/")
       )
         continue;
       const key = normalizeStoragePath(object.key);
@@ -738,7 +739,8 @@ export async function handleListFolders(env) {
       if (
         key.startsWith(".tokens/") ||
         key.startsWith(".jobs/") ||
-        key.startsWith(".settings/")
+        key.startsWith(".settings/") ||
+        key.startsWith(".fetch_cache/")
       )
         continue;
       let normalized = normalizeStoragePath(key);

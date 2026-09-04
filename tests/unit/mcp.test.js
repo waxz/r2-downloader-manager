@@ -78,6 +78,8 @@ test("tools/list returns every file-system tool with a name and schema", async (
       "copy_file",
       "get_file_info",
       "fetch_url",
+      "save_url_to_storage",
+      "list_fetch_cache",
     ],
   );
   for (const t of body.result.tools) {
@@ -261,4 +263,26 @@ test("fetch_url rejects an invalid URL with isError", async () => {
   const res = await callTool(env, "fetch_url", { url: "not a url at all" });
   assert.equal(res.isError, true);
   assert.match(res.text, /Invalid URL/i);
+});
+
+test("save_url_to_storage rejects missing url", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "save_url_to_storage", {});
+  assert.equal(res.isError, true);
+  assert.match(res.text, /Missing url/i);
+});
+
+test("save_url_to_storage rejects non-http(s) scheme", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "save_url_to_storage", { url: "file:///etc/passwd" });
+  assert.equal(res.isError, true);
+  assert.match(res.text, /http/i);
+});
+
+test("list_fetch_cache returns empty list when nothing is cached", async () => {
+  const env = createMockEnv();
+  const res = await callTool(env, "list_fetch_cache", {});
+  assert.equal(res.isError, false);
+  assert.equal(res.data.count, 0);
+  assert.deepEqual(res.data.entries, []);
 });
