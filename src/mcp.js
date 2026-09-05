@@ -697,9 +697,34 @@ async function handleJsonRpcMessage(env, msg) {
   }
 }
 
+// CORS headers attached to every /mcp response so browser-based MCP clients
+// (web UIs, Claude.ai integrations) can call the endpoint cross-origin.
+// The API key in x-api-key is the auth gate; wildcard origin is intentional
+// because MCP clients may run from any origin, and the key already ensures
+// only authorised callers can do anything useful.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+  "Access-Control-Max-Age": "86400",
+};
+
+function withCors(response) {
+  const r = new Response(response.body, response);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) r.headers.set(k, v);
+  return r;
+}
+
 export async function fetch_mcp(request, env) {
+  // Preflight: browsers send OPTIONS before the real POST.
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   if (request.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+    return withCors(
+      new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST, OPTIONS" } }),
+    );
   }
 
   // Same API key gate /api/* uses (see fetch_api in _worker.js): fails
@@ -708,14 +733,14 @@ export async function fetch_mcp(request, env) {
   const url = new URL(request.url);
   const providedKey = request.headers.get("x-api-key") || url.searchParams.get("key");
   if (!authKey || !providedKey || !(await timingSafeEqual(providedKey, authKey))) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    return withCors(Response.json({ error: "Unauthorized" }, { status: 401 }));
   }
 
   let body;
   try {
     body = await request.json();
   } catch {
-    return Response.json(jsonRpcError(null, -32700, "Parse error"), { status: 400 });
+    return withCors(Response.json(jsonRpcError(null, -32700, "Parse error"), { status: 400 }));
   }
 
   const messages = Array.isArray(body) ? body : [body];
@@ -726,6 +751,6 @@ export async function fetch_mcp(request, env) {
   }
 
   // Every message in the batch was a notification: nothing to send back.
-  if (!responses.length) return new Response(null, { status: 202 });
-  return Response.json(Array.isArray(body) ? responses : responses[0]);
+  if (!responses.length) return withCors(new Response(null, { status: 202 }));
+  return withCors(Response.json(Array.isArray(body) ? responses : responses[0]));
 }
