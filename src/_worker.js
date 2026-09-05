@@ -496,6 +496,30 @@ async function fetch_api(request, env) {
     return jsonError("Internal Error: " + e.message, 500);
   }
 }
+// ============================================================================
+// CORS
+// ============================================================================
+// A single set of headers applied to every response from every handler so
+// browser-based clients (web UIs, Claude.ai, custom dashboards) can call the
+// API, MCP, and WebDAV endpoints cross-origin. The broad method/header lists
+// cover REST, MCP (POST + x-api-key), and WebDAV (PROPFIND, COPY, MOVE, …)
+// in one place rather than duplicating across handlers.
+export const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods":
+    "GET, HEAD, POST, PUT, DELETE, OPTIONS, COPY, MOVE, MKCOL, PROPFIND, PROPPATCH, LOCK, UNLOCK",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Authorization, x-api-key, Depth, Destination, Overwrite, DAV, If",
+  "Access-Control-Expose-Headers": "DAV, Allow, Content-Length, Content-Type, ETag",
+  "Access-Control-Max-Age": "86400",
+};
+
+export function withCors(response) {
+  const r = new Response(response.body, response);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) r.headers.set(k, v);
+  return r;
+}
+
 export default {
   async fetch(request, env) {
     try {
@@ -508,8 +532,20 @@ export default {
       // test runner reporter when tests exercise this path directly.
       console.log("Incoming request:", { method, path });
 
+      // CORS preflight: browsers send OPTIONS before any cross-origin request.
+      // /api and /mcp have no OPTIONS semantics of their own, so we answer
+      // immediately with 204. WebDAV *does* use OPTIONS to advertise DAV
+      // capabilities, so we let fetch_webdav handle it and add CORS headers
+      // to its response via withCors() below.
+      if (
+        method === "OPTIONS" &&
+        (path.startsWith("/api") || path === "/mcp" || path.startsWith("/get/") || path.startsWith("/s/"))
+      ) {
+        return new Response(null, { status: 204, headers: CORS_HEADERS });
+      }
+
       // --- Public share (no auth) ---
-      if (path.startsWith("/s/")) return handlePublicShare(url, env);
+      if (path.startsWith("/s/")) return withCors(await handlePublicShare(url, env));
 
       //-- API
       // "/get/<name>" is a plain, API-key-gated download link handled inside
@@ -518,7 +554,7 @@ export default {
       // instead require WebDAV Basic Auth and treat "get" as a literal
       // folder name in the file tree.
       if (path.startsWith("/api") || path.startsWith("/get/"))
-        return fetch_api(request, env);
+        return withCors(await fetch_api(request, env));
 
       // MCP (Model Context Protocol) server: lets an MCP client (e.g. an
       // AI agent) list/read/write/delete/move files in this bucket as
@@ -526,7 +562,7 @@ export default {
       // for the same reason "/get/" is above — otherwise it falls through
       // to WebDAV, which would require Basic Auth and treat "mcp" as a
       // literal folder name.
-      if (path === "/mcp") return fetch_mcp(request, env);
+      if (path === "/mcp") return withCors(await fetch_mcp(request, env));
 
       if (
         (path === "/" || path === "/index.html") &&
@@ -536,12 +572,12 @@ export default {
         return env.ASSETS.fetch(request);
       }
 
-      //-- Webdav
-      if (path.startsWith("/")) return fetch_webdav(request, env);
+      //-- Webdav (OPTIONS passes through here so DAV capability headers are preserved)
+      if (path.startsWith("/")) return withCors(await fetch_webdav(request, env));
 
-      return jsonError("Not Found: " + path, 404);
+      return withCors(jsonError("Not Found: " + path, 404));
     } catch (e) {
-      return jsonError("Internal Error: " + e.message, 500);
+      return withCors(jsonError("Internal Error: " + e.message, 500));
     }
   },
 };
