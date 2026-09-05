@@ -697,9 +697,11 @@ async function handleJsonRpcMessage(env, msg) {
   }
 }
 
+// CORS is applied by the top-level fetch handler in _worker.js (withCors),
+// so fetch_mcp itself does not need to set any CORS headers.
 export async function fetch_mcp(request, env) {
   if (request.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "POST, OPTIONS" } });
   }
 
   // Same API key gate /api/* uses (see fetch_api in _worker.js): fails

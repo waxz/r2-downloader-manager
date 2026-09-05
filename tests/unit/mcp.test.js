@@ -109,7 +109,48 @@ test("a request without a valid API key is rejected before any JSON-RPC handling
   assert.equal(wrongKey.status, 401);
 });
 
-test("non-POST requests are rejected", async () => {
+test("OPTIONS preflight returns 204 with CORS headers and no body", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/mcp", {
+      method: "OPTIONS",
+      headers: {
+        "Origin": "https://claude.ai",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type, x-api-key",
+      },
+    }),
+    env,
+  );
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+  assert.ok(res.headers.get("access-control-allow-methods").includes("POST"));
+  assert.ok(res.headers.get("access-control-allow-headers").includes("x-api-key"));
+  assert.equal(await res.text(), "");
+});
+
+test("POST responses carry CORS headers", async () => {
+  const env = createMockEnv();
+  const res = await mcpRequest(env, { jsonrpc: "2.0", id: 1, method: "ping" });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+});
+
+test("401 Unauthorized response also carries CORS headers", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    }),
+    env,
+  );
+  assert.equal(res.status, 401);
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+});
+
+test("non-POST/OPTIONS requests are rejected", async () => {
   const env = createMockEnv();
   const res = await worker.fetch(
     new Request("https://example.com/mcp?key=" + env.APIKEYSECRET, { method: "GET" }),

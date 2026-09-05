@@ -342,3 +342,50 @@ test("HEAD / with valid WebDAV credentials returns a real WebDAV response, not t
   );
   assert.equal(res.status, 200);
 });
+
+// --- CORS ---
+
+test("OPTIONS /api preflight returns 204 with CORS headers", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/api/files", { method: "OPTIONS" }),
+    env,
+  );
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+  assert.ok(res.headers.get("access-control-allow-methods").includes("POST"));
+  assert.equal(await res.text(), "");
+});
+
+test("GET /api response carries CORS headers", async () => {
+  const env = createMockEnv();
+  const res = await api(env, "/api/files");
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+});
+
+test("OPTIONS /mcp preflight returns 204 with CORS headers", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/mcp", { method: "OPTIONS" }),
+    env,
+  );
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+  assert.equal(await res.text(), "");
+});
+
+test("WebDAV OPTIONS response carries CORS headers alongside DAV headers", async () => {
+  const env = createMockEnv();
+  const res = await worker.fetch(
+    new Request("https://example.com/", {
+      method: "OPTIONS",
+      headers: { Authorization: basicAuthHeader("demo", "demo") },
+    }),
+    env,
+  );
+  // WebDAV OPTIONS must still carry DAV capability header.
+  assert.ok(res.headers.get("dav"), "DAV header must be present");
+  // And CORS headers must be present too.
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+  assert.ok(res.headers.get("access-control-allow-methods").includes("PROPFIND"));
+});
